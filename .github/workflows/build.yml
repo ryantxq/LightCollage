@@ -32,7 +32,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: 检出代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: 检查构建环境（系统 csc.exe）
         shell: powershell
@@ -75,7 +75,7 @@ jobs:
           }
 
       - name: 上传构建产物（ZIP）
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: lightcollage-windows
           path: dist/*.zip
@@ -91,10 +91,10 @@ jobs:
       PYTHONUTF8: '1'
     steps:
       - name: 检出代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: 安装 Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: '3.12'
 
@@ -149,7 +149,7 @@ jobs:
 
       - name: 上传测试日志（失败时）
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: core-test-log
           path: tests/core/last-run.log
