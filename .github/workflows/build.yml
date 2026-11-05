@@ -1,0 +1,157 @@
+# 轻拼 LightCollage · 持续集成（Windows-only）
+# 项目使用系统自带 .NET Framework 4.8 的 csc.exe 编译，无需 dotnet SDK / Visual Studio / NuGet。
+#
+# 注意：所有 run: 脚本保持纯 ASCII。
+# GitHub Actions 会把 run 块写成无 BOM 的 .ps1，Windows PowerShell 5.1 会按系统 ANSI 代码页
+# 读取脚本，中文/emoji 等非 ASCII 字符可能造成 "TerminatorExpectedAtEndOfString" 解析错误；
+# 中文只放在 YAML 注释、job/step 名称里（这些不写入脚本文件）。
+name: Build
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+# 最小权限：只读仓库内容（artifact 上传使用 Actions 内置服务，无需额外权限）
+permissions:
+  contents: read
+
+# 同一分支的新推送取消旧构建，节省 CI 时长
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: 构建（Windows / .NET Framework 4.8）
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 检查构建环境（系统 csc.exe）
+        shell: powershell
+        run: |
+          $csc = 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe'
+          if (-not (Test-Path -LiteralPath $csc -PathType Leaf)) {
+            throw "csc.exe not found: $csc (requires .NET Framework 4.8)"
+          }
+          $info = (Get-Item -LiteralPath $csc).VersionInfo
+          Write-Host "PowerShell: $($PSVersionTable.PSVersion)"
+          Write-Host "csc.exe  : $csc (file version $($info.FileVersion))"
+
+      - name: 构建（scripts\build.ps1）
+        shell: powershell
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build.ps1
+          if ($LASTEXITCODE -ne 0) {
+            throw "Build failed: scripts\build.ps1 exit code $LASTEXITCODE"
+          }
+
+      - name: 校验构建产物
+        shell: powershell
+        run: |
+          $exe = 'build\LightCollage.exe'
+          if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
+            throw "Missing build output: $exe"
+          }
+          $zips = @(Get-ChildItem -LiteralPath 'dist' -Filter '*.zip' -File)
+          if ($zips.Count -eq 0) {
+            throw 'No ZIP package found under dist/'
+          }
+          $lines = @('### Build artifacts', '')
+          foreach ($zip in $zips) {
+            $size = [math]::Round($zip.Length / 1KB, 1)
+            Write-Host "ZIP: $($zip.FullName) ($size KB)"
+            $lines += ('- ' + $zip.Name + ' (' + $size + ' KB)')
+          }
+          if ($env:GITHUB_STEP_SUMMARY) {
+            [System.IO.File]::AppendAllText($env:GITHUB_STEP_SUMMARY, (($lines -join "`n") + "`n"), [System.Text.UTF8Encoding]::new($false))
+          }
+
+      - name: 上传构建产物（ZIP）
+        uses: actions/upload-artifact@v4
+        with:
+          name: lightcollage-windows
+          path: dist/*.zip
+          if-no-files-found: error
+          retention-days: 14
+
+  core-tests:
+    name: 核心测试（Windows / Pillow）
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      # 保证 Python 输出按 UTF-8 编码（runner 控制台默认编码可能不是 UTF-8）
+      PYTHONUTF8: '1'
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 安装 Pillow
+        shell: powershell
+        run: |
+          python -m pip install --disable-pip-version-check --no-input pillow
+          if ($LASTEXITCODE -ne 0) {
+            throw "pip install pillow failed (exit code $LASTEXITCODE)"
+          }
+
+      - name: 检查测试环境
+        shell: powershell
+        run: |
+          $python = (Get-Command python -ErrorAction Stop).Source
+          Write-Host "python: $python"
+          python -c "import PIL, sys; print('Pillow', PIL.__version__, '|', sys.version)"
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Python / Pillow is not available'
+          }
+          $csc = 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe'
+          if (-not (Test-Path -LiteralPath $csc -PathType Leaf)) {
+            throw "csc.exe not found: $csc (requires .NET Framework 4.8)"
+          }
+          Write-Host "csc.exe: $csc"
+
+      # 该脚本退出码：0=全部通过，1=有失败用例，2=环境/编译问题；非 0 一律让 job 失败。
+      # 只跑不依赖交互桌面的核心逻辑测试（tests/core）；UI 自动化测试（tests/qa）不在 CI 中运行。
+      - name: 运行核心测试（tests\core\run-core-tests.ps1）
+        shell: powershell
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File tests\core\run-core-tests.ps1
+          $code = $LASTEXITCODE
+          Write-Host "run-core-tests.ps1 exit code: $code (0=all passed, 1=test failures, 2=env/compile error)"
+
+          $summary = @()
+          $log = 'tests\core\last-run.log'
+          if (Test-Path -LiteralPath $log -PathType Leaf) {
+            $stats = Select-String -LiteralPath $log -Pattern 'PASSED:.*FAILED:.*' | Select-Object -Last 1
+            if ($null -ne $stats) {
+              $summary += ('**Core tests**: ' + $stats.Line.Trim())
+            }
+          }
+          $summary += ('**run-core-tests.ps1 exit code**: ' + $code)
+          if ($env:GITHUB_STEP_SUMMARY) {
+            [System.IO.File]::AppendAllText($env:GITHUB_STEP_SUMMARY, (($summary -join "`n") + "`n"), [System.Text.UTF8Encoding]::new($false))
+          }
+
+          if ($code -ne 0) {
+            throw "Core tests failed (exit code $code)"
+          }
+
+      - name: 上传测试日志（失败时）
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: core-test-log
+          path: tests/core/last-run.log
+          if-no-files-found: ignore
+          retention-days: 7

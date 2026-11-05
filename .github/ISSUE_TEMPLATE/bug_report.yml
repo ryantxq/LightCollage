@@ -1,0 +1,129 @@
+# 轻拼 LightCollage · Bug 反馈表单
+name: Bug 反馈
+description: 报告「轻拼 LightCollage」使用中遇到的问题（右键菜单、预览、拼接、保存等）
+title: "[Bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈！请尽量完整填写下面的表单，信息越具体越容易定位问题。
+
+        - 提交前请先在 [Issues](https://github.com/ryantxq/LightCollage/issues?q=is%3Aissue) 中搜索是否已有相同问题。
+        - 使用问题请先阅读 [README](https://github.com/ryantxq/LightCollage#readme) 中的「常见问题 FAQ」。
+        - 请勿在公开 Issue 中粘贴含隐私或敏感信息的内容（如完整个人路径、注册表导出）。
+
+  - type: checkboxes
+    id: precheck
+    attributes:
+      label: 提交前确认
+      options:
+        - label: 我已搜索过现有 Issue，确认这不是重复问题。
+          required: true
+        - label: 我已阅读 README 的「常见问题 FAQ」并尝试过其中的排查方法。
+          required: false
+
+  - type: dropdown
+    id: windows-version
+    attributes:
+      label: Windows 版本
+      description: 可在「设置 → 系统 → 关于」中查看。
+      options:
+        - Windows 11
+        - Windows 10
+        - Windows Server
+        - 其他（请在「其他补充信息」中注明）
+    validations:
+      required: true
+
+  - type: input
+    id: windows-build
+    attributes:
+      label: Windows 具体版本号
+      description: 运行 `winver` 可查看完整版本号。
+      placeholder: 例如 10.0.22631.4169
+    validations:
+      required: false
+
+  - type: input
+    id: app-version
+    attributes:
+      label: 轻拼版本
+      description: 主窗口「关于」对话框或 LightCollage.exe 文件属性中的版本号。
+      placeholder: 例如 v1.0.0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: launch-method
+    attributes:
+      label: 使用方式
+      description: 问题发生在哪种使用方式下？
+      options:
+        - 资源管理器右键菜单「拼图」
+        - 直接运行 LightCollage.exe
+        - 拖拽图片到窗口 / 拖入文件
+        - 其他（请在「其他补充信息」中注明）
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 请按顺序写出能稳定复现的操作步骤（选了几张图、图片格式、排列方向、参数等）。
+      placeholder: |
+        1. 在资源管理器选中 3 张 JPG / PNG 图片
+        2. 右键 →「拼图」
+        3. 切换为纵向排列，间距 10，边距 20
+        4. 点击「保存」…
+      render: markdown
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望结果
+      description: 描述你认为应该发生什么。
+      placeholder: 例如：应生成 800×2400 的 PNG，图片之间无缝隙。
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际结果
+      description: 实际发生了什么？如有错误提示，请原样粘贴提示文字。
+      placeholder: 例如：保存后图片只有第一张；或弹出「保存失败：…」。
+    validations:
+      required: true
+
+  - type: textarea
+    id: attachments
+    attributes:
+      label: 截图 / 日志 / 示例图片
+      description: |
+        可直接把截图或录屏**拖拽/粘贴**到下方评论框上传（GitHub 会自动插入链接）。
+        也可附上能复现的示例图片；如与界面设置有关，可附上 `%APPDATA%\LightCollage\settings.ini`。
+        如果问题只出现在特定格式（HEIC / AVIF / WebP 等），请务必附上样图。
+      placeholder: 拖拽或粘贴截图 / 日志链接；没有可不填。
+    validations:
+      required: false
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: 其他补充信息
+      description: 例如显示器缩放比例、是否多显示器、系统已装的 WIC 解码扩展、杀毒软件等。
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: 确认
+      options:
+        - label: 我已确认上传的截图、日志和示例图片不包含隐私或敏感信息。
+          required: true

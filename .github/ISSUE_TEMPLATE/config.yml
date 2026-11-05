@@ -1,0 +1,12 @@
+# 轻拼 LightCollage · Issue 模板配置
+blank_issues_enabled: false
+contact_links:
+  - name: 使用文档与常见问题（README）
+    url: https://github.com/ryantxq/LightCollage#readme
+    about: 安装/卸载右键菜单、支持的图片格式、拼接参数、构建与测试方法，请先阅读 README。
+  - name: 搜索已有 Issue
+    url: https://github.com/ryantxq/LightCollage/issues?q=is%3Aissue
+    about: 提问前请先搜索是否已有相同问题或建议，避免重复。
+  - name: 安全漏洞报告
+    url: https://github.com/ryantxq/LightCollage/security/advisories/new
+    about: 请勿通过公开 Issue 披露安全漏洞，请使用私密漏洞报告。

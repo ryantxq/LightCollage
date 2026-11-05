@@ -1,0 +1,36 @@
+# 轻拼 LightCollage · Git 忽略规则
+# 原则：只忽略构建产物、测试产物、本机证据与编辑器/系统垃圾；
+#       assets/、src/、tests/core/fixtures/、docs/screenshots/ 等需要入库的文件不要误伤。
+
+# ===== 构建产物 =====
+/build/
+/dist/
+*.exe
+*.dll
+*.pdb
+*.zip
+
+# ===== 测试产物 =====
+/tests/core/bin/
+/tests/core/last-run.log
+/tests/qa/bin/*.exe
+
+# ===== 本机验收证据（不进版本库；仓库仅保留 docs/qa/验收报告.md）=====
+/docs/qa/logs/
+/docs/qa/screenshots/
+
+# ===== Python =====
+__pycache__/
+*.pyc
+*.pyo
+
+# ===== IDE / 编辑器 =====
+.vs/
+.vscode/
+*.user
+*.suo
+
+# ===== Windows / macOS 系统文件 =====
+Thumbs.db
+Desktop.ini
+.DS_Store

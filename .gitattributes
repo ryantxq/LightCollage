@@ -1,0 +1,41 @@
+# 轻拼 LightCollage · Git 属性（行尾与二进制规则）
+# 本仓库为 Windows 项目：批处理/脚本/C# 源码统一检出为 CRLF，文档与文本用 LF；
+# 图片、字体、压缩包等按二进制处理，禁止行尾转换与文本 diff。
+
+# ===== 默认：自动识别文本，仓库内统一 LF 存储 =====
+* text=auto
+
+# ===== Windows 脚本与源码：强制 CRLF =====
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+*.psm1 text eol=crlf
+*.cs text eol=crlf
+*.csproj text eol=crlf
+*.sln text eol=crlf
+*.manifest text eol=crlf
+
+# ===== 文档 / 纯文本：LF =====
+*.md text eol=lf
+*.txt text eol=lf
+
+# ===== 二进制资源：不做文本处理 =====
+*.png binary
+*.ico binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.gif binary
+*.avif binary
+*.heic binary
+*.zip binary
+*.exe binary
+*.dll binary
+*.pdb binary
+
+# ===== 字体（如后续加入）：二进制 =====
+*.ttf binary
+*.ttc binary
+*.otf binary
+*.woff binary
+*.woff2 binary

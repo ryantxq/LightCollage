@@ -1,0 +1,169 @@
+# 轻拼 LightCollage · 打 tag 自动构建并发布 GitHub Release
+# 触发：推送形如 v1.0.0 的 tag；使用 runner 预装的 GitHub CLI（gh）+ secrets.GITHUB_TOKEN。
+#
+# 注意：所有 run: 脚本保持纯 ASCII。
+# GitHub Actions 会把 run 块写成无 BOM 的 .ps1，Windows PowerShell 5.1 会按系统 ANSI 代码页
+# 读取脚本，中文/emoji 等非 ASCII 字符可能造成 "TerminatorExpectedAtEndOfString" 解析错误；
+# 中文只放在 YAML 注释、job/step 名称和 env 值里（env 变量以 Unicode 传给进程，不受脚本编码影响）。
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+# 创建 Release 需要写权限
+permissions:
+  contents: write
+
+# 一次只跑一个发布任务；不自动取消，避免 Release 创建到一半被中断
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: 构建并发布 Release（Windows / .NET Framework 4.8）
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 校验 tag 与版本号
+        shell: powershell
+        run: |
+          $tag = '${{ github.ref_name }}'
+          $tagVersion = $tag -replace '^v', ''
+          Write-Host "Release tag: $tag"
+
+          if ($tag -notmatch '^v\d+\.\d+\.\d+([-.][0-9A-Za-z.-]+)?$') {
+            Write-Host "::warning::Release tag '$tag' is not in the recommended vX.Y.Z format; publishing anyway."
+          }
+
+          $fileVersion = '(not parsed)'
+          $modelsFile = 'src\Common\Models.cs'
+          $match = Select-String -LiteralPath $modelsFile -Pattern 'public const string Version = "([0-9]+\.[0-9]+\.[0-9]+)"' |
+            Select-Object -First 1
+          if ($null -ne $match) {
+            $fileVersion = $match.Matches[0].Groups[1].Value
+            Write-Host "src\Common\Models.cs Version: $fileVersion"
+            if ($tagVersion -ne $fileVersion) {
+              Write-Host "::warning::Release tag version '$tagVersion' does not match Version '$fileVersion' in src\Common\Models.cs; please double-check the release version."
+            } else {
+              Write-Host 'Release tag matches src\Common\Models.cs Version.'
+            }
+          } else {
+            Write-Host '::warning::Could not parse the Version constant from src\Common\Models.cs; skipping version check.'
+          }
+
+          $summary = @(
+            '### Release info',
+            '',
+            '| Item | Value |',
+            '| --- | --- |',
+            ('| Release tag | ' + $tag + ' |'),
+            ('| Models.cs Version | ' + $fileVersion + ' |')
+          ) -join "`n"
+          if ($env:GITHUB_STEP_SUMMARY) {
+            [System.IO.File]::AppendAllText($env:GITHUB_STEP_SUMMARY, ($summary + "`n"), [System.Text.UTF8Encoding]::new($false))
+          }
+
+      - name: 检查构建环境（系统 csc.exe）
+        shell: powershell
+        run: |
+          $csc = 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe'
+          if (-not (Test-Path -LiteralPath $csc -PathType Leaf)) {
+            throw "csc.exe not found: $csc (requires .NET Framework 4.8)"
+          }
+          $info = (Get-Item -LiteralPath $csc).VersionInfo
+          Write-Host "csc.exe: $csc (file version $($info.FileVersion))"
+
+      - name: 构建（scripts\build.ps1）
+        shell: powershell
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build.ps1
+          if ($LASTEXITCODE -ne 0) {
+            throw "Build failed: scripts\build.ps1 exit code $LASTEXITCODE"
+          }
+
+      - name: 校验发布产物
+        shell: powershell
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          if (-not (Test-Path -LiteralPath 'build\LightCollage.exe' -PathType Leaf)) {
+            throw 'Missing build\LightCollage.exe'
+          }
+          $zips = @(Get-ChildItem -LiteralPath 'dist' -Filter '*.zip' -File | Sort-Object Name)
+          if ($zips.Count -eq 0) {
+            throw 'No ZIP package found under dist/'
+          }
+          # Release asset names should be ASCII so download URLs/links stay portable.
+          $assetName = 'LightCollage-' + $env:RELEASE_TAG + '-windows.zip'
+          $assetPath = Join-Path 'dist' $assetName
+          Move-Item -LiteralPath $zips[0].FullName -Destination $assetPath -Force
+          $size = [math]::Round((Get-Item -LiteralPath $assetPath).Length / 1KB, 1)
+          Write-Host "Release asset: $assetName ($size KB)"
+
+      - name: 创建 Release 并上传 ZIP（gh CLI）
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Release 标题前缀含中文，通过 env 传入；run 脚本本身保持纯 ASCII
+          RELEASE_TITLE_PREFIX: '轻拼 LightCollage'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = '${{ github.ref_name }}'
+          $repo = $env:GITHUB_REPOSITORY
+
+          $zips = @(Get-ChildItem -LiteralPath 'dist' -Filter '*.zip' -File | Sort-Object Name)
+          if ($zips.Count -eq 0) {
+            throw 'No ZIP package found under dist/; cannot create release.'
+          }
+          $assets = @($zips | ForEach-Object { $_.FullName })
+
+          $extraArgs = @()
+          if ($tag -match '-') {
+            $extraArgs = @('--prerelease')
+          }
+
+          Write-Host "Repo  : $repo"
+          Write-Host "Tag   : $tag"
+          foreach ($asset in $assets) { Write-Host "Asset : $asset" }
+
+          # Re-run friendly: if the release already exists, only re-upload the ZIP assets.
+          $previous = $ErrorActionPreference
+          $ErrorActionPreference = 'Continue'
+          gh release view $tag --repo $repo --json tagName 2>$null | Out-Null
+          $releaseExists = ($LASTEXITCODE -eq 0)
+          $ErrorActionPreference = $previous
+
+          if ($releaseExists) {
+            Write-Host "Release $tag already exists; re-uploading ZIP assets with --clobber."
+            gh release upload $tag @assets --clobber --repo $repo
+            if ($LASTEXITCODE -ne 0) {
+              throw "gh release upload failed (exit code $LASTEXITCODE)"
+            }
+          } else {
+            $title = "$env:RELEASE_TITLE_PREFIX $tag"
+            Write-Host "Creating release: $title"
+            gh release create $tag @assets --repo $repo --title $title --generate-notes --verify-tag @extraArgs
+            if ($LASTEXITCODE -ne 0) {
+              throw "gh release create failed (exit code $LASTEXITCODE)"
+            }
+          }
+
+          $releaseUrl = gh release view $tag --repo $repo --json url --jq '.url'
+          if ($LASTEXITCODE -eq 0 -and $releaseUrl) {
+            Write-Host "Release URL: $releaseUrl"
+            $summaryLines = @(
+              '### Release published',
+              '',
+              ('- tag: ' + $tag),
+              ('- release: ' + $releaseUrl)
+            )
+            if ($env:GITHUB_STEP_SUMMARY) {
+              [System.IO.File]::AppendAllText($env:GITHUB_STEP_SUMMARY, (($summaryLines -join "`n") + "`n"), [System.Text.UTF8Encoding]::new($false))
+            }
+          }
