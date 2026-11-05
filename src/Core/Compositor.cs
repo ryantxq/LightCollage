@@ -116,19 +116,48 @@ namespace LightCollage.Core
                     FillBackground(canvas, background);
                     using (ImageAttributes attributes = CreateTileFlipAttributes())
                     {
-                        for (int i = 0; i < usable.Count; i++)
+                        if (layout.IsGrid)
                         {
-                            LayoutItem placement = layout.Items[i];
-                            // 边界取整：gap=0 时相邻图片在预览里严格相接，不出现 1px 透明缝/重叠
-                            Rectangle destination = CreatePreviewDestination(
-                                placement, scaleX, scaleY, previewWidth, previewHeight);
-                            if (destination.Width < 1 || destination.Height < 1)
+                            // 网格：按 LayoutItem.Index 取图（容量溢出时多余图片不参与预览），
+                            // 区域矩形内等比 contain 居中后乘预览缩放比；与保存共用同一 contain 公式。
+                            int itemCount = layout.Items.Length;
+                            for (int i = 0; i < itemCount; i++)
                             {
-                                continue;
+                                LayoutItem placement = layout.Items[i];
+                                if (placement == null || placement.Index < 0 || placement.Index >= usable.Count)
+                                {
+                                    continue;
+                                }
+                                Bitmap preview = usable[placement.Index].Preview;
+                                Rectangle region = new Rectangle(placement.X, placement.Y,
+                                    Math.Max(1, placement.Width), Math.Max(1, placement.Height));
+                                Rectangle contained = CreateContainDestination(region, preview.Width, preview.Height);
+                                Rectangle destination = CreatePreviewDestination(
+                                    contained, scaleX, scaleY, previewWidth, previewHeight);
+                                if (destination.Width < 1 || destination.Height < 1)
+                                {
+                                    continue;
+                                }
+                                graphics.DrawImage(preview, destination, 0, 0, preview.Width, preview.Height,
+                                    GraphicsUnit.Pixel, attributes);
                             }
-                            Bitmap preview = usable[i].Preview;
-                            graphics.DrawImage(preview, destination, 0, 0, preview.Width, preview.Height,
-                                GraphicsUnit.Pixel, attributes);
+                        }
+                        else
+                        {
+                            for (int i = 0; i < usable.Count; i++)
+                            {
+                                LayoutItem placement = layout.Items[i];
+                                // 边界取整：gap=0 时相邻图片在预览里严格相接，不出现 1px 透明缝/重叠
+                                Rectangle destination = CreatePreviewDestination(
+                                    placement, scaleX, scaleY, previewWidth, previewHeight);
+                                if (destination.Width < 1 || destination.Height < 1)
+                                {
+                                    continue;
+                                }
+                                Bitmap preview = usable[i].Preview;
+                                graphics.DrawImage(preview, destination, 0, 0, preview.Width, preview.Height,
+                                    GraphicsUnit.Pixel, attributes);
+                            }
                         }
                     }
                 }
@@ -230,7 +259,16 @@ namespace LightCollage.Core
             {
                 throw new ArgumentException("图片数量（" + paths.Count + "）与尺寸数量（" + sizes.Count + "）不一致。", "sizes");
             }
-            if (paths.Count != layout.Count)
+            bool grid = layout.IsGrid;
+            if (grid)
+            {
+                // 网格模式：容量溢出时未放入网格的图片不参与保存，允许 paths.Count >= layout.Count。
+                if (paths.Count < layout.Count)
+                {
+                    throw new ArgumentException("图片数量（" + paths.Count + "）少于布局项数量（" + layout.Count + "）。", "layout");
+                }
+            }
+            else if (paths.Count != layout.Count)
             {
                 throw new ArgumentException("图片数量（" + paths.Count + "）与布局项数量（" + layout.Count + "）不一致。", "layout");
             }
@@ -276,26 +314,64 @@ namespace LightCollage.Core
                     FillBackground(canvas, background);
                     using (ImageAttributes attributes = CreateTileFlipAttributes())
                     {
-                        for (int i = 0; i < paths.Count; i++)
+                        if (grid)
                         {
-                            using (Bitmap full = ImageLoader.LoadFull(paths[i]))
+                            // 网格：只遍历已放入的区域（layout.Items），用 Index 取图；
+                            // 区域矩形内等比 contain 居中（与预览同一公式），大图/小图都完整显示不裁切。
+                            int itemCount = layout.Items == null ? 0 : layout.Items.Length;
+                            for (int i = 0; i < itemCount; i++)
                             {
                                 LayoutItem placement = layout.Items[i];
-                                Rectangle destination = new Rectangle(
-                                    placement.X, placement.Y,
-                                    Math.Max(1, placement.Width), Math.Max(1, placement.Height));
-                                // TileFlipXY：避免双三次缩放时图片边界采样到透明，产生 gap=0 半透明缝
-                                graphics.DrawImage(full, destination, 0, 0, full.Width, full.Height,
-                                    GraphicsUnit.Pixel, attributes);
-                            }
-                            if (progress != null)
-                            {
-                                int percent = (int)Math.Round((i + 1) * 100.0 / paths.Count, MidpointRounding.AwayFromZero);
-                                if (percent > 100)
+                                if (placement != null && placement.Index >= 0 && placement.Index < paths.Count)
                                 {
-                                    percent = 100;
+                                    using (Bitmap full = ImageLoader.LoadFull(paths[placement.Index]))
+                                    {
+                                        Rectangle region = new Rectangle(placement.X, placement.Y,
+                                            Math.Max(1, placement.Width), Math.Max(1, placement.Height));
+                                        Rectangle destination = CreateContainDestination(
+                                            region, full.Width, full.Height);
+                                        if (destination.Width >= 1 && destination.Height >= 1)
+                                        {
+                                            graphics.DrawImage(full, destination, 0, 0, full.Width, full.Height,
+                                                GraphicsUnit.Pixel, attributes);
+                                        }
+                                    }
                                 }
-                                progress.Report(percent);
+                                if (progress != null)
+                                {
+                                    int percent = (int)Math.Round((i + 1) * 100.0 / itemCount,
+                                        MidpointRounding.AwayFromZero);
+                                    if (percent > 100)
+                                    {
+                                        percent = 100;
+                                    }
+                                    progress.Report(percent);
+                                }
+                            }
+                        }
+                        else
+                        {
+                            for (int i = 0; i < paths.Count; i++)
+                            {
+                                using (Bitmap full = ImageLoader.LoadFull(paths[i]))
+                                {
+                                    LayoutItem placement = layout.Items[i];
+                                    Rectangle destination = new Rectangle(
+                                        placement.X, placement.Y,
+                                        Math.Max(1, placement.Width), Math.Max(1, placement.Height));
+                                    // TileFlipXY：避免双三次缩放时图片边界采样到透明，产生 gap=0 半透明缝
+                                    graphics.DrawImage(full, destination, 0, 0, full.Width, full.Height,
+                                        GraphicsUnit.Pixel, attributes);
+                                }
+                                if (progress != null)
+                                {
+                                    int percent = (int)Math.Round((i + 1) * 100.0 / paths.Count, MidpointRounding.AwayFromZero);
+                                    if (percent > 100)
+                                    {
+                                        percent = 100;
+                                    }
+                                    progress.Report(percent);
+                                }
                             }
                         }
                     }
@@ -341,20 +417,60 @@ namespace LightCollage.Core
         }
 
         /// <summary>
+        /// 计算“区域矩形内等比 contain 并居中”的整数目标矩形（不裁切、不变形）。
+        /// 预览与保存共用此公式，保证两者视觉效果一致；无法绘制时返回 Empty。
+        /// </summary>
+        private static Rectangle CreateContainDestination(Rectangle region, int sourceWidth, int sourceHeight)
+        {
+            if (region.Width < 1 || region.Height < 1 || sourceWidth < 1 || sourceHeight < 1)
+            {
+                return Rectangle.Empty;
+            }
+            double scale = Math.Min((double)region.Width / (double)sourceWidth,
+                                    (double)region.Height / (double)sourceHeight);
+            int width = Math.Max(1, RoundAway((double)sourceWidth * scale));
+            int height = Math.Max(1, RoundAway((double)sourceHeight * scale));
+            if (width > region.Width)
+            {
+                width = region.Width;
+            }
+            if (height > region.Height)
+            {
+                height = region.Height;
+            }
+            int x = region.X + (region.Width - width) / 2;
+            int y = region.Y + (region.Height - height) / 2;
+            return new Rectangle(x, y, width, height);
+        }
+
+        /// <summary>
         /// 预览目标矩形：用边界取整，保证 gap=0 时相邻图片在预览里严格相接（无 1px 透明缝/重叠）。
         /// x1=round(X*s), x2=round((X+W)*s), 宽=x2-x1；纵向同理。
         /// </summary>
         private static Rectangle CreatePreviewDestination(LayoutItem placement, double scaleX, double scaleY,
                                                           int canvasWidth, int canvasHeight)
         {
-            if (placement == null || canvasWidth < 1 || canvasHeight < 1)
+            if (placement == null)
             {
                 return Rectangle.Empty;
             }
-            int x1 = ClampToRange(RoundAway((double)placement.X * scaleX), 0, canvasWidth);
-            int x2 = ClampToRange(RoundAway(((double)placement.X + (double)placement.Width) * scaleX), 0, canvasWidth);
-            int y1 = ClampToRange(RoundAway((double)placement.Y * scaleY), 0, canvasHeight);
-            int y2 = ClampToRange(RoundAway(((double)placement.Y + (double)placement.Height) * scaleY), 0, canvasHeight);
+            return CreatePreviewDestination(
+                new Rectangle(placement.X, placement.Y, placement.Width, placement.Height),
+                scaleX, scaleY, canvasWidth, canvasHeight);
+        }
+
+        /// <summary>把输出坐标矩形按预览缩放比换算到预览位图坐标（边界取整）。</summary>
+        private static Rectangle CreatePreviewDestination(Rectangle region, double scaleX, double scaleY,
+                                                          int canvasWidth, int canvasHeight)
+        {
+            if (canvasWidth < 1 || canvasHeight < 1)
+            {
+                return Rectangle.Empty;
+            }
+            int x1 = ClampToRange(RoundAway((double)region.X * scaleX), 0, canvasWidth);
+            int x2 = ClampToRange(RoundAway(((double)region.X + (double)region.Width) * scaleX), 0, canvasWidth);
+            int y1 = ClampToRange(RoundAway((double)region.Y * scaleY), 0, canvasHeight);
+            int y2 = ClampToRange(RoundAway(((double)region.Y + (double)region.Height) * scaleY), 0, canvasHeight);
             if (x2 <= x1)
             {
                 x2 = Math.Min(canvasWidth, x1 + 1);

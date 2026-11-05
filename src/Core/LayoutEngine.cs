@@ -56,15 +56,56 @@ namespace LightCollage.Core
             }
 
             values.Sort();
-            int n = values.Count;
+            return RoundMedian(values);
+        }
+
+        /// <summary>
+        /// 网格模式的自动单元格尺寸：宽、高分别取所有图片宽、高的中位数（偶数取中间两个平均、
+        /// 四舍五入、至少 1）。空列表返回 0×0。网格模式不使用 AutoBaseSize/BaseSize。
+        /// </summary>
+        public static ImageSize GetAutoGridCellSize(IList<ImageSize> sizes)
+        {
+            if (sizes == null || sizes.Count == 0)
+            {
+                return new ImageSize(0, 0);
+            }
+
+            List<int> widths = new List<int>(sizes.Count);
+            List<int> heights = new List<int>(sizes.Count);
+            for (int i = 0; i < sizes.Count; i++)
+            {
+                ImageSize size = sizes[i];
+                int width = size == null ? 1 : size.Width;
+                int height = size == null ? 1 : size.Height;
+                if (width < 1)
+                {
+                    width = 1;
+                }
+                if (height < 1)
+                {
+                    height = 1;
+                }
+                widths.Add(width);
+                heights.Add(height);
+            }
+
+            widths.Sort();
+            heights.Sort();
+            return new ImageSize(RoundMedian(widths), RoundMedian(heights));
+        }
+
+        /// <summary>已排序列表的中位数：奇数取中间值，偶数取中间两个平均值后四舍五入，至少 1。</summary>
+        private static int RoundMedian(List<int> sortedValues)
+        {
+            int n = sortedValues.Count;
             double median;
             if ((n & 1) == 1)
             {
-                median = values[n / 2];
+                median = sortedValues[n / 2];
             }
             else
             {
-                median = ((double)values[n / 2 - 1] + (double)values[n / 2]) / 2.0;
+                median = ((double)sortedValues[n / 2 - 1] + (double)sortedValues[n / 2]) / 2.0;
             }
 
             int rounded = (int)Math.Round(median, MidpointRounding.AwayFromZero);
@@ -101,6 +142,12 @@ namespace LightCollage.Core
                 maxSide = DefaultMaxSide;
             }
 
+            // v1.1：网格模式走独立分支；横向/纵向路径保持 v1.0 原实现不变。
+            if (settings.Orientation == CollageOrientation.Grid)
+            {
+                return ComputeGrid(sizes, settings, maxPixels, maxSide);
+            }
+
             CollageOrientation orientation = settings.Orientation == CollageOrientation.Vertical
                 ? CollageOrientation.Vertical
                 : CollageOrientation.Horizontal;
@@ -133,6 +180,227 @@ namespace LightCollage.Core
                 baseSize = 1;
             }
             return baseSize;
+        }
+
+        // ---------------------------------------------------------------- 网格模式（v1.1）
+
+        /// <summary>
+        /// 网格布局入口：行列/间距 clamp、合并规范化、行优先区域顺序、容量截断
+        /// （只产出 placed = min(图片数, 容量) 个 LayoutItem，Index = 图片下标）。
+        /// </summary>
+        private static CollageLayout ComputeGrid(IList<ImageSize> sizes, CollageSettings settings,
+                                                 int maxPixels, int maxSide)
+        {
+            int rows = GridLayout.ClampRows(settings.GridRows);
+            int columns = GridLayout.ClampColumns(settings.GridColumns);
+            List<GridRegion> merges = GridLayout.NormalizeMerges(rows, columns, settings.Merges);
+            List<GridRegion> regions = GridLayout.BuildRegions(rows, columns, merges);
+            int capacity = regions.Count;
+            int placed = Math.Min(sizes.Count, capacity);
+            int margin = Clamp(settings.Margin, 0, MaxGapOrMargin);
+            int rowGap = GridLayout.ClampGap(settings.RowGap);
+            int columnGap = GridLayout.ClampGap(settings.ColumnGap);
+
+            ImageSize autoCell = GetAutoGridCellSize(sizes);
+            int cellWidth = autoCell.Width < 1 ? 1 : autoCell.Width;
+            int cellHeight = autoCell.Height < 1 ? 1 : autoCell.Height;
+
+            OutputSizeMode sizeMode = NormalizeSizeMode(settings.OutputSizeMode);
+            if (sizeMode != OutputSizeMode.Auto && settings.OutputTarget >= 1)
+            {
+                return ComputeGridWithOutputTarget(regions, placed, rows, columns,
+                    cellWidth, cellHeight, rowGap, columnGap, margin,
+                    sizeMode, settings.OutputTarget, maxPixels, maxSide);
+            }
+            return ComputeGridAuto(regions, placed, rows, columns,
+                cellWidth, cellHeight, rowGap, columnGap, margin, maxPixels, maxSide);
+        }
+
+        /// <summary>网格 Auto 模式：自然尺寸超限时循环缩小 cellW/cellH（间距/边距不缩）。</summary>
+        private static CollageLayout ComputeGridAuto(List<GridRegion> regions, int placed,
+                                                     int rows, int columns,
+                                                     int cellWidth, int cellHeight,
+                                                     int rowGap, int columnGap, int margin,
+                                                     int maxPixels, int maxSide)
+        {
+            CollageLayout layout = BuildGrid(regions, placed, rows, columns,
+                cellWidth, cellHeight, rowGap, columnGap, margin);
+            if (IsWithinLimits(layout, maxPixels, maxSide))
+            {
+                return layout;
+            }
+
+            int currentWidth = cellWidth;
+            int currentHeight = cellHeight;
+            for (int iteration = 0; iteration < 64; iteration++)
+            {
+                if (currentWidth <= 1 && currentHeight <= 1)
+                {
+                    // 已经缩到最小仍超限（间距/边距本身就超限）：接受最大可能值，不抛异常。
+                    break;
+                }
+
+                double ratio = ComputeShrinkRatio(layout, maxPixels, maxSide);
+                int nextWidth = ShrinkDimension(currentWidth, ratio);
+                int nextHeight = ShrinkDimension(currentHeight, ratio);
+                if (nextWidth == currentWidth && nextHeight == currentHeight)
+                {
+                    break;
+                }
+                currentWidth = nextWidth;
+                currentHeight = nextHeight;
+
+                layout = BuildGrid(regions, placed, rows, columns,
+                    currentWidth, currentHeight, rowGap, columnGap, margin);
+                if (IsWithinLimits(layout, maxPixels, maxSide))
+                {
+                    layout.WasClamped = true;
+                    return layout;
+                }
+            }
+
+            layout.WasClamped = true;
+            return layout;
+        }
+
+        /// <summary>网格 Width/Height 模式：先算自然布局，再整体缩放到目标主尺寸（复用 ScaleLayout）。</summary>
+        private static CollageLayout ComputeGridWithOutputTarget(List<GridRegion> regions, int placed,
+                                                                 int rows, int columns,
+                                                                 int cellWidth, int cellHeight,
+                                                                 int rowGap, int columnGap, int margin,
+                                                                 OutputSizeMode sizeMode, int target,
+                                                                 int maxPixels, int maxSide)
+        {
+            bool widthMode = sizeMode == OutputSizeMode.Width;
+            CollageLayout natural = BuildGrid(regions, placed, rows, columns,
+                cellWidth, cellHeight, rowGap, columnGap, margin);
+            if (natural.CanvasWidth < 1 || natural.CanvasHeight < 1)
+            {
+                // 极端无效输入：安全退回 Auto 逻辑
+                return ComputeGridAuto(regions, placed, rows, columns,
+                    cellWidth, cellHeight, rowGap, columnGap, margin, maxPixels, maxSide);
+            }
+
+            int desired = target < 1 ? 1 : target;
+            int current = desired;
+            for (int iteration = 0; iteration < 64; iteration++)
+            {
+                CollageLayout scaled = ScaleLayout(natural, current, widthMode);
+                if (IsWithinLimits(scaled, maxPixels, maxSide))
+                {
+                    scaled.WasClamped = current != desired;
+                    return scaled;
+                }
+                if (current <= 1)
+                {
+                    scaled.WasClamped = true;
+                    return scaled;
+                }
+
+                double ratio = ComputeShrinkRatio(scaled, maxPixels, maxSide);
+                int next = (int)Math.Floor(current * ratio);
+                if (next >= current)
+                {
+                    next = current - 1;
+                }
+                if (next < 1)
+                {
+                    next = 1;
+                }
+                current = next;
+            }
+
+            CollageLayout fallback = ScaleLayout(natural, current, widthMode);
+            fallback.WasClamped = true;
+            return fallback;
+        }
+
+        /// <summary>
+        /// 按网格几何构建布局（整数像素）：x(c) = margin + c*(cellW+colGap)，y(r) 同理；
+        /// 区域矩形包含其跨越的内部行/列间距。Items 只包含前 placed 个区域。
+        /// </summary>
+        private static CollageLayout BuildGrid(List<GridRegion> regions, int placed,
+                                               int rows, int columns,
+                                               int cellWidth, int cellHeight,
+                                               int rowGap, int columnGap, int margin)
+        {
+            if (cellWidth < 1)
+            {
+                cellWidth = 1;
+            }
+            if (cellHeight < 1)
+            {
+                cellHeight = 1;
+            }
+            if (rowGap < 0)
+            {
+                rowGap = 0;
+            }
+            if (columnGap < 0)
+            {
+                columnGap = 0;
+            }
+            if (margin < 0)
+            {
+                margin = 0;
+            }
+
+            long canvasWidth = 2L * margin + (long)columns * cellWidth
+                + (long)(columns - 1) * columnGap;
+            long canvasHeight = 2L * margin + (long)rows * cellHeight
+                + (long)(rows - 1) * rowGap;
+
+            LayoutItem[] items = new LayoutItem[placed];
+            for (int i = 0; i < placed; i++)
+            {
+                GridRegion region = regions[i];
+                long spanColumns = region.ColSpan < 1 ? 1 : region.ColSpan;
+                long spanRows = region.RowSpan < 1 ? 1 : region.RowSpan;
+
+                LayoutItem item = new LayoutItem();
+                item.Index = i;
+                item.X = ClampToInt((long)margin + (long)region.Col * ((long)cellWidth + columnGap));
+                item.Y = ClampToInt((long)margin + (long)region.Row * ((long)cellHeight + rowGap));
+                item.Width = ClampToInt(spanColumns * cellWidth + (spanColumns - 1) * columnGap);
+                item.Height = ClampToInt(spanRows * cellHeight + (spanRows - 1) * rowGap);
+                items[i] = item;
+            }
+
+            CollageLayout layout = new CollageLayout();
+            layout.Items = items;
+            layout.BaseSize = cellWidth;
+            layout.WasClamped = false;
+            layout.CanvasWidth = ClampToInt(canvasWidth);
+            layout.CanvasHeight = ClampToInt(canvasHeight);
+            layout.IsGrid = true;
+            layout.GridRows = rows;
+            layout.GridColumns = columns;
+            layout.CellWidth = cellWidth;
+            layout.CellHeight = cellHeight;
+            layout.RowGap = rowGap;
+            layout.ColumnGap = columnGap;
+            layout.GridMargin = margin;
+            layout.Capacity = regions.Count;
+            return layout;
+        }
+
+        /// <summary>按比例缩小一个单元格维度：至少减 1，最小 1。</summary>
+        private static int ShrinkDimension(int current, double ratio)
+        {
+            if (current <= 1)
+            {
+                return 1;
+            }
+            int next = (int)Math.Floor((double)current * ratio);
+            if (next >= current)
+            {
+                next = current - 1;
+            }
+            if (next < 1)
+            {
+                next = 1;
+            }
+            return next;
         }
 
         // ---------------------------------------------------------------- Auto 模式
@@ -312,6 +580,22 @@ namespace LightCollage.Core
                 items[i] = item;
             }
             result.Items = items;
+
+            // 网格元数据同步缩放（v1.1）：间距/边距/单元格按同一比例缩放并取整，
+            // 主尺寸仍精确等于目标（由 CanvasWidth/CanvasHeight 保证）。
+            if (natural.IsGrid)
+            {
+                result.IsGrid = true;
+                result.GridRows = natural.GridRows;
+                result.GridColumns = natural.GridColumns;
+                result.Capacity = natural.Capacity;
+                result.GridMargin = Math.Max(0, RoundToInt((double)natural.GridMargin * factor));
+                result.RowGap = Math.Max(0, RoundToInt((double)natural.RowGap * factor));
+                result.ColumnGap = Math.Max(0, RoundToInt((double)natural.ColumnGap * factor));
+                result.CellWidth = Math.Max(1, RoundToInt((double)natural.CellWidth * factor));
+                result.CellHeight = Math.Max(1, RoundToInt((double)natural.CellHeight * factor));
+                result.BaseSize = result.CellWidth;
+            }
             return result;
         }
 

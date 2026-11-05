@@ -119,6 +119,25 @@ internal static class CoreTests
         Test("Layout/HeightModePixelClamp", LayoutHeightModePixelClamp);
         Test("Layout/TargetInvalidSafe", LayoutTargetInvalidSafe);
 
+        // 网格布局（v1.1）
+        Test("Layout/GridAutoCellSize", LayoutGridAutoCellSize);
+        Test("Layout/GridGeometry3x3", LayoutGridGeometry3x3);
+        Test("Layout/GridRowMajorOrder", LayoutGridRowMajorOrder);
+        Test("Layout/GridLastRowEmpty", LayoutGridLastRowEmpty);
+        Test("Layout/GridMerge2x2", LayoutGridMerge2x2);
+        Test("Layout/GridMergeSpanSingleLine", LayoutGridMergeSpanSingleLine);
+        Test("Layout/GridSingleCell", LayoutGridSingleCell);
+        Test("Layout/GridCapacityTruncation", LayoutGridCapacityTruncation);
+        Test("Layout/GridMax20x20", LayoutGridMax20x20);
+        Test("Layout/GridGapZeroSeamless", LayoutGridGapZeroSeamless);
+        Test("Layout/GridWidthModeExact", LayoutGridWidthModeExact);
+        Test("Layout/GridHeightModeExact", LayoutGridHeightModeExact);
+        Test("Layout/GridMergeWidthMode", LayoutGridMergeWidthMode);
+        Test("Layout/GridSizeClamp", LayoutGridSizeClamp);
+        Test("Layout/GridInvalidMergesIgnored", LayoutGridInvalidMergesIgnored);
+        Test("Layout/GridClampInvalidSettings", LayoutGridClampInvalidSettings);
+        Test("Layout/GridEmptyAndSingle", LayoutGridEmptyAndSingle);
+
         // 加载
         Test("Loader/SupportedExtensions", LoaderSupportedExtensions);
         Test("Loader/BasicEditing", LoaderBasicEditing);
@@ -158,6 +177,14 @@ internal static class CoreTests
         Test("Compose/GapZeroPreviewFromBigPreviews", ComposeGapZeroPreviewFromBigPreviews);
         Test("Compose/GapZeroJpegNoBackgroundColumn", ComposeGapZeroJpegNoBackgroundColumn);
 
+        // 网格合成（v1.1）
+        Test("Compose/GridTransparentGaps", ComposeGridTransparentGaps);
+        Test("Compose/GridMergeContain", ComposeGridMergeContain);
+        Test("Compose/GridEmptySlotsBackground", ComposeGridEmptySlotsBackground);
+        Test("Compose/GridJpegWhiteBackground", ComposeGridJpegWhiteBackground);
+        Test("Compose/GridPreviewMatchesSave", ComposeGridPreviewMatchesSave);
+        Test("Compose/GridCapacityOverflow", ComposeGridCapacityOverflow);
+
         // 设置
         Test("Settings/Defaults", SettingsDefaults);
         Test("Settings/RoundTrip", SettingsRoundTrip);
@@ -167,6 +194,12 @@ internal static class CoreTests
         Test("Settings/OldConfigDefaults", SettingsOldConfigDefaults);
         Test("Settings/OutputSizeClamp", SettingsOutputSizeClamp);
         Test("Settings/SaveFailureSilent", SettingsSaveFailureSilent);
+
+        // 网格设置（v1.1）
+        Test("Settings/GridDefaults", SettingsGridDefaults);
+        Test("Settings/GridRoundTrip", SettingsGridRoundTrip);
+        Test("Settings/GridClampAndCorrupt", SettingsGridClampAndCorrupt);
+        Test("Settings/GridOldConfigDefaults", SettingsGridOldConfigDefaults);
     }
 
     // ---------------------------------------------------------------- 布局
@@ -677,6 +710,397 @@ internal static class CoreTests
         AreEqual(0, empty.CanvasWidth, "空列表 Width 模式安全返回 0x0");
         AreEqual(0, empty.CanvasHeight, "空列表 Width 模式高 0");
         AreEqual(0, empty.Count, "空列表项数 0");
+    }
+
+    // ---------------------------------------------------------------- 网格布局（v1.1）
+
+    private static CollageSettings GridSettings(int rows, int columns, int rowGap, int columnGap, int margin)
+    {
+        CollageSettings settings = new CollageSettings();
+        settings.Orientation = CollageOrientation.Grid;
+        settings.GridRows = rows;
+        settings.GridColumns = columns;
+        settings.RowGap = rowGap;
+        settings.ColumnGap = columnGap;
+        settings.Margin = margin;
+        return settings;
+    }
+
+    private static List<ImageSize> RepeatedSizes(int count, int width, int height)
+    {
+        List<ImageSize> sizes = new List<ImageSize>(count);
+        for (int i = 0; i < count; i++)
+        {
+            sizes.Add(new ImageSize(width, height));
+        }
+        return sizes;
+    }
+
+    private static void AssertGridInfo(CollageLayout layout, int rows, int columns, int cellWidth,
+                                       int cellHeight, int rowGap, int columnGap, int margin, int capacity)
+    {
+        AssertTrue(layout.IsGrid, "应标记为网格布局");
+        AreEqual(rows, layout.GridRows, "GridRows");
+        AreEqual(columns, layout.GridColumns, "GridColumns");
+        AreEqual(cellWidth, layout.CellWidth, "CellWidth");
+        AreEqual(cellHeight, layout.CellHeight, "CellHeight");
+        AreEqual(rowGap, layout.RowGap, "RowGap");
+        AreEqual(columnGap, layout.ColumnGap, "ColumnGap");
+        AreEqual(margin, layout.GridMargin, "GridMargin");
+        AreEqual(capacity, layout.Capacity, "Capacity");
+        AreEqual(cellWidth, layout.BaseSize, "网格 BaseSize=CellWidth");
+    }
+
+    private static void LayoutGridAutoCellSize()
+    {
+        List<ImageSize> odd = new List<ImageSize>();
+        odd.Add(new ImageSize(100, 50));
+        odd.Add(new ImageSize(300, 60));
+        odd.Add(new ImageSize(200, 70));
+        ImageSize oddCell = LayoutEngine.GetAutoGridCellSize(odd);
+        AreEqual(200, oddCell.Width, "宽度中位数 200");
+        AreEqual(60, oddCell.Height, "高度中位数 60");
+
+        List<ImageSize> even = new List<ImageSize>();
+        even.Add(new ImageSize(10, 301));
+        even.Add(new ImageSize(12, 302));
+        ImageSize evenCell = LayoutEngine.GetAutoGridCellSize(even);
+        AreEqual(11, evenCell.Width, "偶数宽度中位数 (10+12)/2=11");
+        AreEqual(302, evenCell.Height, "偶数高度中位数 301.5 四舍五入=302");
+
+        ImageSize emptyCell = LayoutEngine.GetAutoGridCellSize(new List<ImageSize>());
+        AreEqual(0, emptyCell.Width, "空列表自动单元格宽 0");
+        AreEqual(0, emptyCell.Height, "空列表自动单元格高 0");
+        AssertTrue(LayoutEngine.GetAutoGridCellSize(null) != null, "null 列表安全返回");
+
+        List<ImageSize> invalid = new List<ImageSize>();
+        invalid.Add(new ImageSize(0, -5));
+        invalid.Add(new ImageSize(-1, 0));
+        ImageSize invalidCell = LayoutEngine.GetAutoGridCellSize(invalid);
+        AreEqual(1, invalidCell.Width, "非法宽度夹到 1");
+        AreEqual(1, invalidCell.Height, "非法高度夹到 1");
+    }
+
+    private static void LayoutGridGeometry3x3()
+    {
+        CollageLayout layout = LayoutEngine.Compute(RepeatedSizes(9, 100, 100),
+            GridSettings(3, 3, 12, 12, 16));
+        AreEqual(356, layout.CanvasWidth, "画布宽 2*16+3*100+2*12");
+        AreEqual(356, layout.CanvasHeight, "画布高 2*16+3*100+2*12");
+        AssertGridInfo(layout, 3, 3, 100, 100, 12, 12, 16, 9);
+        AreEqual(9, layout.Count, "9 张图片全部放入");
+        AssertTrue(!layout.WasClamped, "普通网格不应 clamp");
+        for (int i = 0; i < layout.Count; i++)
+        {
+            AreEqual(i, layout.Items[i].Index, "LayoutItem.Index=图片下标");
+            AreEqual(100, layout.Items[i].Width, "单元格宽");
+            AreEqual(100, layout.Items[i].Height, "单元格高");
+        }
+        AreEqual(16, layout.Items[0].X, "x(0)=margin");
+        AreEqual(16, layout.Items[0].Y, "y(0)=margin");
+        AreEqual(128, layout.Items[1].X, "x(1)=16+100+12");
+        AreEqual(240, layout.Items[2].X, "x(2)=16+2*(100+12)");
+        AreEqual(16, layout.Items[3].X, "第 2 行第 1 列 X");
+        AreEqual(128, layout.Items[3].Y, "y(1)=16+100+12");
+        AreEqual(128, layout.Items[4].X, "第 2 行第 2 列 X");
+        AreEqual(240, layout.Items[8].X, "第 3 行第 3 列 X");
+        AreEqual(240, layout.Items[8].Y, "第 3 行第 3 列 Y");
+    }
+
+    private static void LayoutGridRowMajorOrder()
+    {
+        CollageLayout layout = LayoutEngine.Compute(RepeatedSizes(4, 100, 100),
+            GridSettings(2, 2, 12, 12, 16));
+        AreEqual(4, layout.Count, "4 张图放入 2×2");
+        for (int i = 0; i < layout.Count; i++)
+        {
+            AreEqual(i, layout.Items[i].Index, "Index 与行优先顺序一致");
+        }
+        AreEqual(16, layout.Items[0].X, "第 1 张 X");
+        AreEqual(16, layout.Items[0].Y, "第 1 张 Y");
+        AreEqual(128, layout.Items[1].X, "第 2 张 X（行优先：向右）");
+        AreEqual(16, layout.Items[1].Y, "第 2 张 Y");
+        AreEqual(16, layout.Items[2].X, "第 3 张 X（换行）");
+        AreEqual(128, layout.Items[2].Y, "第 3 张 Y");
+        AreEqual(128, layout.Items[3].X, "第 4 张 X");
+        AreEqual(128, layout.Items[3].Y, "第 4 张 Y");
+        AreEqual(244, layout.CanvasWidth, "画布宽 2*16+2*100+12");
+        AreEqual(244, layout.CanvasHeight, "画布高 2*16+2*100+12");
+    }
+
+    private static void LayoutGridLastRowEmpty()
+    {
+        // 3×3 只放 7 张图：第 3 行最后两格留空，几何仍按完整网格
+        CollageLayout layout = LayoutEngine.Compute(RepeatedSizes(7, 100, 100),
+            GridSettings(3, 3, 12, 12, 16));
+        AreEqual(7, layout.Count, "只产出 7 个 LayoutItem");
+        AreEqual(9, layout.Capacity, "容量仍为 9");
+        AreEqual(356, layout.CanvasWidth, "画布按完整网格计算");
+        AreEqual(356, layout.CanvasHeight, "画布高按完整网格计算");
+        AreEqual(16, layout.Items[6].X, "第 7 张在第 3 行第 1 列");
+        AreEqual(240, layout.Items[6].Y, "第 7 张 Y");
+    }
+
+    private static void LayoutGridMerge2x2()
+    {
+        CollageSettings settings = GridSettings(3, 3, 12, 12, 16);
+        settings.Merges.Add(new GridRegion(0, 0, 2, 2));
+        CollageLayout layout = LayoutEngine.Compute(RepeatedSizes(7, 100, 100), settings);
+        AreEqual(6, layout.Capacity, "2×2 合并后容量 9-3=6");
+        AreEqual(6, layout.Count, "placed=min(7,6)=6");
+        AreEqual(356, layout.CanvasWidth, "画布宽不受合并影响");
+        AreEqual(16, layout.Items[0].X, "大格 X=margin");
+        AreEqual(16, layout.Items[0].Y, "大格 Y=margin");
+        AreEqual(212, layout.Items[0].Width, "大格宽 2*100+12（含跨越的内部列间距）");
+        AreEqual(212, layout.Items[0].Height, "大格高 2*100+12（含跨越的内部行间距）");
+        AreEqual(0, layout.Items[0].Index, "大格放第 1 张图");
+        AreEqual(240, layout.Items[1].X, "区域 2 X=x(2)");
+        AreEqual(16, layout.Items[1].Y, "区域 2 Y");
+        AreEqual(240, layout.Items[2].X, "区域 3 X");
+        AreEqual(128, layout.Items[2].Y, "区域 3 Y");
+        AreEqual(16, layout.Items[3].X, "区域 4 X");
+        AreEqual(240, layout.Items[3].Y, "区域 4 Y");
+        AreEqual(128, layout.Items[4].X, "区域 5 X");
+        AreEqual(240, layout.Items[4].Y, "区域 5 Y");
+        AreEqual(240, layout.Items[5].X, "区域 6 X");
+        AreEqual(240, layout.Items[5].Y, "区域 6 Y");
+    }
+
+    private static void LayoutGridMergeSpanSingleLine()
+    {
+        // 1×3 横向合并：宽度包含跨越的列间距，只放 1 张图
+        CollageSettings horizontal = GridSettings(2, 3, 12, 12, 16);
+        horizontal.Merges.Add(new GridRegion(0, 0, 1, 3));
+        CollageLayout h = LayoutEngine.Compute(RepeatedSizes(5, 100, 100), horizontal);
+        AreEqual(4, h.Capacity, "1×3 合并后容量 6-2=4");
+        AreEqual(4, h.Count, "只放入 4 张图");
+        AreEqual(356, h.CanvasWidth, "画布宽 2*16+3*100+2*12");
+        AreEqual(244, h.CanvasHeight, "画布高 2*16+2*100+12");
+        AreEqual(324, h.Items[0].Width, "大格宽 3*100+2*12");
+        AreEqual(100, h.Items[0].Height, "大格高");
+        AreEqual(16, h.Items[1].X, "第 2 张 X");
+        AreEqual(128, h.Items[1].Y, "第 2 张 Y=16+100+12");
+
+        // 3×1 纵向合并
+        CollageSettings vertical = GridSettings(3, 2, 12, 12, 16);
+        vertical.Merges.Add(new GridRegion(0, 0, 3, 1));
+        CollageLayout v = LayoutEngine.Compute(RepeatedSizes(4, 100, 100), vertical);
+        AreEqual(4, v.Capacity, "3×1 合并后容量 6-2=4");
+        AreEqual(244, v.CanvasWidth, "画布宽 2*16+2*100+12");
+        AreEqual(356, v.CanvasHeight, "画布高 2*16+3*100+2*12");
+        AreEqual(100, v.Items[0].Width, "大格宽");
+        AreEqual(324, v.Items[0].Height, "大格高 3*100+2*12");
+        AreEqual(128, v.Items[1].X, "第 2 张 X=16+100+12");
+        AreEqual(16, v.Items[1].Y, "第 2 张 Y");
+    }
+
+    private static void LayoutGridSingleCell()
+    {
+        CollageLayout layout = LayoutEngine.Compute(RepeatedSizes(3, 100, 100),
+            GridSettings(1, 1, 12, 12, 16));
+        AreEqual(1, layout.Capacity, "1×1 容量 1");
+        AreEqual(1, layout.Count, "只放入 1 张图");
+        AreEqual(132, layout.CanvasWidth, "画布宽 2*16+100");
+        AreEqual(132, layout.CanvasHeight, "画布高 2*16+100");
+        AreEqual(16, layout.Items[0].X, "X=margin");
+        AreEqual(16, layout.Items[0].Y, "Y=margin");
+        AreEqual(100, layout.Items[0].Width, "宽");
+        AreEqual(100, layout.Items[0].Height, "高");
+        AssertGridInfo(layout, 1, 1, 100, 100, 12, 12, 16, 1);
+    }
+
+    private static void LayoutGridCapacityTruncation()
+    {
+        CollageLayout layout = LayoutEngine.Compute(RepeatedSizes(5, 100, 100),
+            GridSettings(2, 2, 12, 12, 16));
+        AreEqual(4, layout.Capacity, "2×2 容量 4");
+        AreEqual(4, layout.Count, "图片数>容量时只产出 4 个 LayoutItem");
+        for (int i = 0; i < layout.Count; i++)
+        {
+            AreEqual(i, layout.Items[i].Index, "Index=图片下标");
+        }
+        AreEqual(128, layout.Items[3].X, "第 4 个区域 X");
+        AreEqual(128, layout.Items[3].Y, "第 4 个区域 Y");
+        AreEqual(244, layout.CanvasWidth, "画布宽 2*16+2*100+12");
+    }
+
+    private static void LayoutGridMax20x20()
+    {
+        CollageLayout layout = LayoutEngine.Compute(RepeatedSizes(210, 100, 100),
+            GridSettings(20, 20, 12, 12, 16));
+        AreEqual(400, layout.Capacity, "20×20 容量 400");
+        AreEqual(210, layout.Count, "210 张图全部放入");
+        AreEqual(2260, layout.CanvasWidth, "画布宽 2*16+20*100+19*12");
+        AreEqual(2260, layout.CanvasHeight, "画布高 2*16+20*100+19*12");
+        AreEqual(1024, layout.Items[209].X, "最后一张 X=16+9*112");
+        AreEqual(1136, layout.Items[209].Y, "最后一张 Y=16+10*112");
+        AssertTrue(!layout.WasClamped, "20×20 小单元格不应 clamp");
+    }
+
+    private static void LayoutGridGapZeroSeamless()
+    {
+        CollageLayout layout = LayoutEngine.Compute(RepeatedSizes(4, 100, 100),
+            GridSettings(2, 2, 0, 0, 16));
+        AreEqual(232, layout.CanvasWidth, "画布宽 2*16+2*100（无间距）");
+        AreEqual(232, layout.CanvasHeight, "画布高 2*16+2*100（无间距）");
+        AreEqual(16, layout.Items[0].X, "第 1 格 X");
+        AreEqual(116, layout.Items[1].X, "第 2 格 X 与第 1 格严格相接");
+        AreEqual(116, layout.Items[2].Y, "第 3 格 Y 与第 1 格严格相接");
+        AreEqual(layout.Items[0].X + layout.Items[0].Width, layout.Items[1].X,
+            "第 1/2 格水平边界严格相接");
+        AreEqual(layout.Items[2].X + layout.Items[2].Width, layout.Items[3].X,
+            "第 3/4 格水平边界严格相接");
+        AreEqual(layout.Items[0].Y + layout.Items[0].Height, layout.Items[2].Y,
+            "第 1/3 格垂直边界严格相接");
+        AreEqual(layout.Items[1].Y + layout.Items[1].Height, layout.Items[3].Y,
+            "第 2/4 格垂直边界严格相接");
+        AreEqual(0, layout.RowGap, "RowGap=0");
+        AreEqual(0, layout.ColumnGap, "ColumnGap=0");
+    }
+
+    private static void LayoutGridWidthModeExact()
+    {
+        // 自然 356×356，目标宽 712（×2 精确）：主尺寸精确、网格元数据同步缩放
+        CollageSettings settings = GridSettings(3, 3, 12, 12, 16);
+        settings.OutputSizeMode = OutputSizeMode.Width;
+        settings.OutputTarget = 712;
+        CollageLayout layout = LayoutEngine.Compute(RepeatedSizes(9, 100, 100), settings);
+        AreEqual(712, layout.CanvasWidth, "指定宽度精确等于目标");
+        AreEqual(712, layout.CanvasHeight, "高度按比例缩放");
+        AssertGridInfo(layout, 3, 3, 200, 200, 24, 24, 32, 9);
+        AssertTrue(!layout.WasClamped, "正常目标不应 clamp");
+        AreEqual(256, layout.Items[1].X, "第 2 张 X=round(128*2)");
+        AreEqual(480, layout.Items[2].X, "第 3 张 X=round(240*2)");
+        AreEqual(256, layout.Items[3].Y, "第 4 张 Y=round(128*2)");
+        AreEqual(480, layout.Items[8].X, "第 9 张 X");
+        AreEqual(480, layout.Items[8].Y, "第 9 张 Y");
+        AreEqual(200, layout.Items[8].Width, "缩放后单元格宽");
+        AreEqual(200, layout.Items[8].Height, "缩放后单元格高");
+    }
+
+    private static void LayoutGridHeightModeExact()
+    {
+        // 自然 356×356，目标高 178（×0.5 精确）
+        CollageSettings settings = GridSettings(3, 3, 12, 12, 16);
+        settings.OutputSizeMode = OutputSizeMode.Height;
+        settings.OutputTarget = 178;
+        CollageLayout layout = LayoutEngine.Compute(RepeatedSizes(9, 100, 100), settings);
+        AreEqual(178, layout.CanvasHeight, "指定高度精确等于目标");
+        AreEqual(178, layout.CanvasWidth, "宽度按比例缩放");
+        AssertGridInfo(layout, 3, 3, 50, 50, 6, 6, 8, 9);
+        AreEqual(64, layout.Items[1].X, "第 2 张 X=round(128*0.5)");
+        AreEqual(120, layout.Items[2].X, "第 3 张 X=round(240*0.5)");
+        AreEqual(64, layout.Items[3].Y, "第 4 张 Y");
+        AreEqual(120, layout.Items[8].X, "第 9 张 X");
+        AreEqual(120, layout.Items[8].Y, "第 9 张 Y");
+        AreEqual(50, layout.Items[8].Width, "缩放后单元格宽");
+        AreEqual(50, layout.Items[8].Height, "缩放后单元格高");
+        AssertTrue(!layout.WasClamped, "正常目标不应 clamp");
+    }
+
+    private static void LayoutGridMergeWidthMode()
+    {
+        // 含合并区域 + 指定宽度：大格矩形与容量/元数据一起缩放
+        CollageSettings settings = GridSettings(3, 3, 12, 12, 16);
+        settings.Merges.Add(new GridRegion(0, 0, 2, 2));
+        settings.OutputSizeMode = OutputSizeMode.Width;
+        settings.OutputTarget = 712;
+        CollageLayout layout = LayoutEngine.Compute(RepeatedSizes(7, 100, 100), settings);
+        AreEqual(712, layout.CanvasWidth, "指定宽度精确等于目标");
+        AreEqual(712, layout.CanvasHeight, "高度按比例缩放");
+        AssertGridInfo(layout, 3, 3, 200, 200, 24, 24, 32, 6);
+        AreEqual(6, layout.Count, "缩放后仍只放入 6 张图");
+        AreEqual(424, layout.Items[0].Width, "大格宽 2*200+24（含跨越的内部列间距）");
+        AreEqual(424, layout.Items[0].Height, "大格高 2*200+24");
+        AreEqual(32, layout.Items[0].X, "大格 X=margin*2");
+        AreEqual(480, layout.Items[1].X, "区域 2 X=round(240*2)");
+        AreEqual(256, layout.Items[2].Y, "区域 3 Y=round(128*2)");
+    }
+
+    private static void LayoutGridSizeClamp()
+    {
+        List<ImageSize> sizes = new List<ImageSize>();
+        sizes.Add(new ImageSize(50000, 50000));
+        CollageLayout layout = LayoutEngine.Compute(sizes, GridSettings(3, 3, 12, 12, 16));
+        AssertTrue(layout.WasClamped, "超大网格应触发尺寸保护");
+        AssertTrue(layout.CanvasWidth <= LayoutEngine.DefaultMaxSide,
+            "画布宽 <= 32000，实际 " + layout.CanvasWidth);
+        AssertTrue(layout.CanvasHeight <= LayoutEngine.DefaultMaxSide,
+            "画布高 <= 32000，实际 " + layout.CanvasHeight);
+        AssertTrue((long)layout.CanvasWidth * layout.CanvasHeight <= LayoutEngine.DefaultMaxPixels,
+            "像素 <= 8000 万，实际 " + ((long)layout.CanvasWidth * layout.CanvasHeight));
+        AssertTrue(layout.CellWidth < 50000, "单元格被缩小，实际 " + layout.CellWidth);
+        AreEqual(layout.CellWidth, layout.CellHeight, "正方形图片单元格宽高一致");
+        AreEqual(2 * layout.GridMargin + 3 * layout.CellWidth + 2 * layout.ColumnGap,
+            layout.CanvasWidth, "画布宽符合网格公式");
+        AreEqual(2 * layout.GridMargin + 3 * layout.CellHeight + 2 * layout.RowGap,
+            layout.CanvasHeight, "画布高符合网格公式");
+        AreEqual(16, layout.GridMargin, "外边距不参与缩小");
+        AreEqual(12, layout.ColumnGap, "列间距不参与缩小");
+        AreEqual(12, layout.RowGap, "行间距不参与缩小");
+        AreEqual(1, layout.Count, "单图仍只有 1 项");
+        AreEqual(16, layout.Items[0].X, "X=margin（边距不缩）");
+    }
+
+    private static void LayoutGridInvalidMergesIgnored()
+    {
+        CollageSettings settings = GridSettings(3, 3, 12, 12, 16);
+        settings.Merges.Add(null);                            // 空项
+        settings.Merges.Add(new GridRegion(1, 1, 1, 1));      // 单格，忽略
+        settings.Merges.Add(new GridRegion(2, 2, 2, 2));      // 越界，忽略
+        settings.Merges.Add(new GridRegion(-1, 0, 1, 2));     // 负坐标，忽略
+        settings.Merges.Add(new GridRegion(0, 0, 2, 2));      // 合法 2×2
+        settings.Merges.Add(new GridRegion(1, 1, 2, 1));      // 部分重叠，忽略
+        settings.Merges.Add(new GridRegion(0, 0, 2, 2));      // 完全重复，忽略
+        CollageLayout layout = LayoutEngine.Compute(RepeatedSizes(7, 100, 100), settings);
+        AreEqual(6, layout.Capacity, "非法合并被忽略后容量 9-3=6");
+        AreEqual(6, layout.Count, "placed=min(7,6)=6");
+        AreEqual(212, layout.Items[0].Width, "合法 2×2 大格宽 2*100+12");
+        AreEqual(212, layout.Items[0].Height, "合法 2×2 大格高");
+        AreEqual(240, layout.Items[1].X, "第 2 个区域 X=16+2*112");
+        AreEqual(128, layout.Items[2].Y, "第 3 个区域 Y=16+112");
+    }
+
+    private static void LayoutGridClampInvalidSettings()
+    {
+        CollageSettings settings = GridSettings(99, -5, 999, -1, -3);
+        CollageLayout layout = LayoutEngine.Compute(RepeatedSizes(2, 100, 100), settings);
+        AreEqual(20, layout.GridRows, "行数夹到 20");
+        AreEqual(1, layout.GridColumns, "列数夹到 1");
+        AreEqual(200, layout.RowGap, "行间距夹到 200");
+        AreEqual(0, layout.ColumnGap, "列间距夹到 0");
+        AreEqual(0, layout.GridMargin, "外边距夹到 0");
+        AreEqual(20, layout.Capacity, "20×1 容量 20");
+        AreEqual(2, layout.Count, "2 张图放入 2 个区域");
+        AreEqual(100, layout.CanvasWidth, "画布宽 0+1*100+0");
+        AreEqual(5800, layout.CanvasHeight, "画布高 20*100+19*200");
+        AreEqual(0, layout.Items[0].X, "X=margin=0");
+        AreEqual(300, layout.Items[1].Y, "Y=0+1*(100+200)");
+    }
+
+    private static void LayoutGridEmptyAndSingle()
+    {
+        CollageLayout empty = LayoutEngine.Compute(new List<ImageSize>(),
+            GridSettings(3, 3, 12, 12, 16));
+        AreEqual(0, empty.CanvasWidth, "空网格画布宽 0");
+        AreEqual(0, empty.CanvasHeight, "空网格画布高 0");
+        AreEqual(0, empty.Count, "空网格项数 0");
+        AssertTrue(!empty.WasClamped, "空网格不标记 clamp");
+
+        // 网格模式不使用旧的自定义基准 BaseSize
+        CollageSettings settings = GridSettings(3, 3, 12, 12, 16);
+        settings.AutoBaseSize = false;
+        settings.BaseSize = 50;
+        CollageLayout single = LayoutEngine.Compute(RepeatedSizes(1, 800, 600), settings);
+        AssertGridInfo(single, 3, 3, 800, 600, 12, 12, 16, 9);
+        AreEqual(2456, single.CanvasWidth, "画布宽 2*16+3*800+2*12");
+        AreEqual(1856, single.CanvasHeight, "画布高 2*16+3*600+2*12");
+        AreEqual(1, single.Count, "单图只放入 1 项");
+        AreEqual(0, single.Items[0].Index, "Index=0");
+        AreEqual(16, single.Items[0].X, "X=margin");
+        AreEqual(16, single.Items[0].Y, "Y=margin");
+        AreEqual(800, single.Items[0].Width, "区域宽=cellW");
+        AreEqual(600, single.Items[0].Height, "区域高=cellH");
     }
 
     // ---------------------------------------------------------------- 加载
@@ -1714,6 +2138,257 @@ internal static class CoreTests
         }
     }
 
+    // ------------------------------------------------ 网格合成（v1.1）
+
+    private static void ComposeGridTransparentGaps()
+    {
+        List<string> paths = new List<string>();
+        paths.Add(Fixture("big_red200x100.png"));
+        paths.Add(Fixture("big_green200x100.png"));
+        List<ImageSize> sizes = Sizes(200, 100, 200, 100);
+        CollageSettings settings = GridSettings(2, 2, 12, 12, 16);
+        CollageLayout layout = LayoutEngine.Compute(sizes, settings);
+        AreEqual(444, layout.CanvasWidth, "网格画布宽 2*16+2*200+12");
+        AreEqual(244, layout.CanvasHeight, "网格画布高 2*16+2*100+12");
+        AreEqual(2, layout.Count, "只放入 2 张图（其余格子留空）");
+
+        using (Bitmap composed = Compositor.Compose(paths, sizes, settings, layout, null))
+        {
+            AreEqual(444, composed.Width, "合成宽");
+            AreEqual(244, composed.Height, "合成高");
+            ColorNear(Red, composed.GetPixel(116, 66), 2, "第 1 格图片红色");
+            ColorNear(Green, composed.GetPixel(328, 66), 2, "第 2 格图片绿色");
+            AreEqual(0, composed.GetPixel(222, 66).A, "列间距应透明");
+            AreEqual(0, composed.GetPixel(100, 122).A, "行间距应透明");
+            AreEqual(0, composed.GetPixel(5, 5).A, "外边距应透明");
+            AreEqual(0, composed.GetPixel(116, 180).A, "空位（第 2 行）应为背景透明");
+        }
+    }
+
+    private static void ComposeGridMergeContain()
+    {
+        List<string> paths = new List<string>();
+        paths.Add(Fixture("big_red200x100.png"));
+        paths.Add(Fixture("big_green200x100.png"));
+        List<ImageSize> sizes = Sizes(200, 100, 200, 100);
+        CollageSettings settings = GridSettings(2, 2, 12, 12, 16);
+        settings.Merges.Add(new GridRegion(0, 0, 1, 2)); // 顶行 1×2 大格
+        CollageLayout layout = LayoutEngine.Compute(sizes, settings);
+        AreEqual(3, layout.Capacity, "1×2 合并后容量 3");
+        AreEqual(2, layout.Count, "2 张图放入 2 个区域");
+        AreEqual(0, layout.Items[0].Index, "大格放第 1 张图");
+        AreEqual(1, layout.Items[1].Index, "第 2 张图放入下一区域");
+        AreEqual(412, layout.Items[0].Width, "大格宽 2*200+12");
+        AreEqual(16, layout.Items[0].X, "大格 X");
+        AreEqual(16, layout.Items[1].X, "第 2 个区域 X");
+        AreEqual(128, layout.Items[1].Y, "第 2 个区域 Y");
+
+        using (Bitmap composed = Compositor.Compose(paths, sizes, settings, layout, null))
+        {
+            // 200×100 的图在 412×100 大格内等比 contain 居中：左右各留 106px 背景
+            AreEqual(0, composed.GetPixel(66, 66).A, "大格内图片左侧应为背景（透明）");
+            AreEqual(0, composed.GetPixel(400, 66).A, "大格内图片右侧应为背景（透明）");
+            ColorNear(Red, composed.GetPixel(222, 66), 2, "大格内图片应居中显示");
+            ColorNear(Green, composed.GetPixel(116, 178), 2, "第 2 张图在下一行左侧");
+        }
+    }
+
+    private static void ComposeGridEmptySlotsBackground()
+    {
+        List<string> paths = new List<string>();
+        paths.Add(Fixture("red40x20.png"));
+        List<ImageSize> sizes = Sizes(40, 20);
+        CollageSettings settings = GridSettings(3, 3, 12, 12, 16);
+        settings.BackgroundColor = Color.FromArgb(255, 0, 0, 255); // 不透明蓝
+        CollageLayout layout = LayoutEngine.Compute(sizes, settings);
+        AreEqual(176, layout.CanvasWidth, "画布宽 2*16+3*40+2*12");
+        AreEqual(116, layout.CanvasHeight, "画布高 2*16+3*20+2*12");
+        AreEqual(1, layout.Count, "1 张图只占第 1 格");
+
+        using (Bitmap composed = Compositor.Compose(paths, sizes, settings, layout, null))
+        {
+            ColorNear(Red, composed.GetPixel(36, 26), 2, "第 1 格为图片红色");
+            ColorNear(Color.FromArgb(255, 0, 0, 255), composed.GetPixel(88, 26), 1,
+                "空位（第 1 行第 2 列）显示背景色");
+            ColorNear(Color.FromArgb(255, 0, 0, 255), composed.GetPixel(140, 90), 1,
+                "空位（第 3 行第 3 列）显示背景色");
+            ColorNear(Color.FromArgb(255, 0, 0, 255), composed.GetPixel(5, 5), 1, "外边距显示背景色");
+            AreEqual(255, composed.GetPixel(88, 26).A, "不透明背景 alpha=255");
+        }
+    }
+
+    private static void ComposeGridJpegWhiteBackground()
+    {
+        List<string> paths = new List<string>();
+        paths.Add(Fixture("big_red200x100.png"));
+        paths.Add(Fixture("big_green200x100.png"));
+        List<ImageSize> sizes = Sizes(200, 100, 200, 100);
+        CollageSettings settings = GridSettings(2, 2, 12, 12, 16);
+        settings.Format = OutputFormat.Jpeg;
+        CollageLayout layout = LayoutEngine.Compute(sizes, settings);
+
+        using (Bitmap composed = Compositor.Compose(paths, sizes, settings, layout, null))
+        {
+            AreEqual((int)PixelFormat.Format24bppRgb, (int)composed.PixelFormat, "JPG 网格合成为 24bpp");
+            ColorNearRgb(Color.White, composed.GetPixel(222, 66), 1, "列间距在白底 JPG 中为白色");
+            ColorNearRgb(Color.White, composed.GetPixel(5, 5), 1, "外边距为白色");
+            ColorNearRgb(Color.White, composed.GetPixel(116, 180), 1, "空位为白色");
+            ColorNearRgb(Red, composed.GetPixel(116, 66), 2, "图片区域为红色");
+            ColorNearRgb(Green, composed.GetPixel(328, 66), 2, "图片区域为绿色");
+        }
+    }
+
+    private static void ComposeGridPreviewMatchesSave()
+    {
+        List<ImageLoadResult> items = LoadItems("big_red200x100.png", "big_green200x100.png");
+        PreviewComposition composition = null;
+        string output = Path.Combine(NewTempDir(), "grid_preview_vs_save.png");
+        List<string> paths = new List<string>();
+        paths.Add(Fixture("big_red200x100.png"));
+        paths.Add(Fixture("big_green200x100.png"));
+        try
+        {
+            List<ImageSize> sizes = new List<ImageSize>();
+            for (int i = 0; i < items.Count; i++)
+            {
+                sizes.Add(new ImageSize(items[i].PixelWidth, items[i].PixelHeight));
+            }
+            CollageSettings settings = GridSettings(2, 2, 12, 12, 16);
+            CollageLayout layout = LayoutEngine.Compute(sizes, settings);
+            composition = Compositor.ComposePreview(items, settings, 4096, 4096);
+            AssertTrue(composition != null, "网格预览非空");
+            AssertTrue(composition.Layout.IsGrid, "预览应携带网格元数据");
+            AreEqual(layout.CanvasWidth, composition.Bitmap.Width, "预览为 1:1 宽，便于像素比对");
+            AreEqual(layout.CanvasHeight, composition.Bitmap.Height, "预览为 1:1 高");
+            AssertTrue(Math.Abs(composition.Scale - 1.0f) < 0.001f, "Scale=1");
+
+            Compositor.Save(paths, sizes, settings, layout, output, null);
+            using (Bitmap saved = ImageLoader.LoadFull(output))
+            {
+                AreEqual(layout.CanvasWidth, saved.Width, "保存图宽与布局一致");
+                AreEqual(layout.CanvasHeight, saved.Height, "保存图高与布局一致");
+                int mismatches = 0;
+                string firstMismatch = null;
+                for (int y = 0; y < layout.CanvasHeight; y += 3)
+                {
+                    for (int x = 0; x < layout.CanvasWidth; x += 3)
+                    {
+                        Color previewPixel = composition.Bitmap.GetPixel(x, y);
+                        Color savedPixel = saved.GetPixel(x, y);
+                        if (!ColorClose(previewPixel, savedPixel, 2))
+                        {
+                            mismatches++;
+                            if (firstMismatch == null)
+                            {
+                                firstMismatch = "(" + x + "," + y + ") 预览 A" + previewPixel.A
+                                    + "R" + previewPixel.R + "G" + previewPixel.G + "B" + previewPixel.B
+                                    + " 保存 A" + savedPixel.A + "R" + savedPixel.R
+                                    + "G" + savedPixel.G + "B" + savedPixel.B;
+                            }
+                        }
+                    }
+                }
+                AssertTrue(mismatches == 0, "网格预览与保存结果像素应一致，差异点 " + mismatches
+                    + " 个，首个：" + firstMismatch);
+            }
+
+            // 缩小预览：Layout 仍为输出像素尺寸，Scale <= 1
+            PreviewComposition scaled = Compositor.ComposePreview(items, settings, 222, 122);
+            try
+            {
+                AssertTrue(scaled != null, "缩小预览非空");
+                AreEqual(222, scaled.Bitmap.Width, "缩小预览宽");
+                AreEqual(122, scaled.Bitmap.Height, "缩小预览高");
+                AssertTrue(Math.Abs(scaled.Scale - 0.5f) < 0.01f,
+                    "缩小预览 Scale≈0.5，实际 " + scaled.Scale.ToString("0.###", CultureInfo.InvariantCulture));
+                AreEqual(layout.CanvasWidth, scaled.Layout.CanvasWidth, "Layout 仍为输出尺寸");
+                AreEqual(layout.CanvasHeight, scaled.Layout.CanvasHeight, "Layout 高仍为输出尺寸");
+            }
+            finally
+            {
+                scaled.Dispose();
+            }
+        }
+        finally
+        {
+            if (composition != null)
+            {
+                composition.Dispose();
+            }
+            DisposeItems(items);
+        }
+    }
+
+    private static void ComposeGridCapacityOverflow()
+    {
+        string[] names = new string[]
+        {
+            "red40x20.png", "green40x20.png", "semi40x20.png", "pattern40x20.png", "big_red200x100.png"
+        };
+        List<ImageLoadResult> items = LoadItems(names);
+        PreviewComposition composition = null;
+        try
+        {
+            List<string> paths = new List<string>();
+            List<ImageSize> sizes = new List<ImageSize>();
+            for (int i = 0; i < names.Length; i++)
+            {
+                paths.Add(Fixture(names[i]));
+                sizes.Add(new ImageSize(items[i].PixelWidth, items[i].PixelHeight));
+            }
+            CollageSettings settings = GridSettings(2, 2, 12, 12, 16);
+            CollageLayout layout = LayoutEngine.Compute(sizes, settings);
+            AreEqual(4, layout.Capacity, "2×2 容量 4");
+            AreEqual(4, layout.Count, "5 张图只放入 4 张");
+            AreEqual(124, layout.CanvasWidth, "画布宽 2*16+2*40+12");
+            AreEqual(84, layout.CanvasHeight, "画布高 2*16+2*20+12");
+
+            composition = Compositor.ComposePreview(items, settings, 4096, 4096);
+            AssertTrue(composition != null, "容量溢出时预览非空");
+            AreEqual(4, composition.Layout.Count, "预览布局只含已放入的 4 项");
+            AreEqual(124, composition.Bitmap.Width, "预览宽");
+            AreEqual(84, composition.Bitmap.Height, "预览高");
+
+            using (Bitmap composed = Compositor.Compose(paths, sizes, settings, layout, null))
+            {
+                AreEqual(124, composed.Width, "合成宽");
+                AreEqual(84, composed.Height, "合成高");
+                for (int y = 0; y < composed.Height; y += 2)
+                {
+                    for (int x = 0; x < composed.Width; x += 2)
+                    {
+                        Color previewPixel = composition.Bitmap.GetPixel(x, y);
+                        Color composedPixel = composed.GetPixel(x, y);
+                        AssertTrue(ColorClose(previewPixel, composedPixel, 2),
+                            "容量溢出时预览与保存一致 @(" + x + "," + y + ")");
+                    }
+                }
+
+                // 未放入网格的第 5 张图不得参与保存：与“只传前 4 张”的结果逐像素一致
+                List<string> firstFourPaths = new List<string>();
+                List<ImageSize> firstFourSizes = new List<ImageSize>();
+                for (int i = 0; i < 4; i++)
+                {
+                    firstFourPaths.Add(paths[i]);
+                    firstFourSizes.Add(sizes[i]);
+                }
+                using (Bitmap firstFour = Compositor.Compose(firstFourPaths, firstFourSizes, settings, layout, null))
+                {
+                    AreEqual(0, CountDifferentPixels(composed, firstFour, 2),
+                        "未放入网格的第 5 张图不应参与保存");
+                }
+            }
+        }
+        finally
+        {
+            if (composition != null)
+            {
+                composition.Dispose();
+            }
+            DisposeItems(items);
+        }
+    }
+
     // ---------------------------------------------------------------- 设置
 
     private static void SettingsDefaults()
@@ -1989,7 +2664,184 @@ internal static class CoreTests
         });
     }
 
+    // ------------------------------------------------ 网格设置（v1.1）
+
+    private static void SettingsGridDefaults()
+    {
+        string directory = Path.Combine(_tempRoot, "settings_grid_defaults");
+        WithSettingsDir(directory, delegate()
+        {
+            AppSettings settings = SettingsStore.Load();
+            AreEqual(3, settings.Collage.GridRows, "默认网格行数 3");
+            AreEqual(3, settings.Collage.GridColumns, "默认网格列数 3");
+            AreEqual(12, settings.Collage.RowGap, "默认行间距 12");
+            AreEqual(12, settings.Collage.ColumnGap, "默认列间距 12");
+            AssertTrue(settings.Collage.Merges != null && settings.Collage.Merges.Count == 0,
+                "默认无合并（非 null 空列表）");
+            AssertTrue(settings.Collage.ShowGridGuides, "默认显示网格辅助线");
+        });
+    }
+
+    private static void SettingsGridRoundTrip()
+    {
+        string directory = Path.Combine(_tempRoot, "settings_grid_roundtrip");
+        WithSettingsDir(directory, delegate()
+        {
+            AppSettings original = new AppSettings();
+            original.Collage.Orientation = CollageOrientation.Grid;
+            original.Collage.GridRows = 5;
+            original.Collage.GridColumns = 4;
+            original.Collage.RowGap = 30;
+            original.Collage.ColumnGap = 40;
+            original.Collage.ShowGridGuides = false;
+            original.Collage.Merges.Add(new GridRegion(0, 0, 2, 2));
+            original.Collage.Merges.Add(new GridRegion(2, 2, 1, 2));
+
+            SettingsStore.Save(original);
+            AssertTrue(File.Exists(SettingsStore.SettingsPath), "设置文件应生成");
+            string raw = File.ReadAllText(SettingsStore.SettingsPath, Encoding.UTF8);
+            AssertTrue(raw.Contains("Orientation=Grid"), "INI 应写入 Orientation=Grid，实际：" + raw);
+            AssertTrue(raw.Contains("GridRows=5"), "INI 应写入 GridRows=5");
+            AssertTrue(raw.Contains("GridColumns=4"), "INI 应写入 GridColumns=4");
+            AssertTrue(raw.Contains("RowGap=30"), "INI 应写入 RowGap=30");
+            AssertTrue(raw.Contains("ColumnGap=40"), "INI 应写入 ColumnGap=40");
+            AssertTrue(raw.Contains("GridMerges=1,1,2,2;3,3,3,4"), "合并应写为 1 基闭区间，实际：" + raw);
+            AssertTrue(raw.Contains("ShowGridGuides=0"), "INI 应写入 ShowGridGuides=0");
+
+            AppSettings loaded = SettingsStore.Load();
+            AreEqual((int)CollageOrientation.Grid, (int)loaded.Collage.Orientation, "方向往返");
+            AreEqual(5, loaded.Collage.GridRows, "行数往返");
+            AreEqual(4, loaded.Collage.GridColumns, "列数往返");
+            AreEqual(30, loaded.Collage.RowGap, "行间距往返");
+            AreEqual(40, loaded.Collage.ColumnGap, "列间距往返");
+            AssertTrue(!loaded.Collage.ShowGridGuides, "辅助线开关往返");
+            AreEqual(2, loaded.Collage.Merges.Count, "合并数量往返");
+            AreEqual(0, loaded.Collage.Merges[0].Row, "合并 1 行");
+            AreEqual(0, loaded.Collage.Merges[0].Col, "合并 1 列");
+            AreEqual(2, loaded.Collage.Merges[0].RowSpan, "合并 1 行跨度");
+            AreEqual(2, loaded.Collage.Merges[0].ColSpan, "合并 1 列跨度");
+            AreEqual(2, loaded.Collage.Merges[1].Row, "合并 2 行");
+            AreEqual(2, loaded.Collage.Merges[1].Col, "合并 2 列");
+            AreEqual(1, loaded.Collage.Merges[1].RowSpan, "合并 2 行跨度");
+            AreEqual(2, loaded.Collage.Merges[1].ColSpan, "合并 2 列跨度");
+        });
+    }
+
+    private static void SettingsGridClampAndCorrupt()
+    {
+        string directory = Path.Combine(_tempRoot, "settings_grid_clamp");
+        WithSettingsDir(directory, delegate()
+        {
+            Directory.CreateDirectory(directory);
+            string path = SettingsStore.SettingsPath;
+
+            File.WriteAllText(path,
+                "[collage]\r\n"
+                + "Orientation=G\r\n"
+                + "GridRows=99\r\n"
+                + "GridColumns=0\r\n"
+                + "RowGap=-7\r\n"
+                + "ColumnGap=999\r\n"
+                + "ShowGridGuides=maybe\r\n"
+                + "GridMerges=1,1,2,2\r\n",
+                Encoding.UTF8);
+            AppSettings loaded = SettingsStore.Load();
+            AreEqual((int)CollageOrientation.Grid, (int)loaded.Collage.Orientation, "G 解析为 Grid");
+            AreEqual(20, loaded.Collage.GridRows, "行数 99 夹到 20");
+            AreEqual(1, loaded.Collage.GridColumns, "列数 0 夹到 1");
+            AreEqual(0, loaded.Collage.RowGap, "负行间距夹到 0");
+            AreEqual(200, loaded.Collage.ColumnGap, "过大列间距夹到 200");
+            AssertTrue(loaded.Collage.ShowGridGuides, "非法布尔回默认 true");
+            AreEqual(0, loaded.Collage.Merges.Count, "列数夹到 1 后 2 列合并越界被丢弃");
+
+            File.WriteAllText(path,
+                "[collage]\r\n"
+                + "Orientation=2\r\n"
+                + "GridRows=3\r\n"
+                + "GridColumns=3\r\n"
+                + "GridMerges=1,1,2,2;0,0,1,1;9,9,9,9;banana;3,2,3,3\r\n",
+                Encoding.UTF8);
+            AppSettings parsed = SettingsStore.Load();
+            AreEqual((int)CollageOrientation.Grid, (int)parsed.Collage.Orientation, "数字 2 解析为 Grid");
+            AreEqual(2, parsed.Collage.Merges.Count, "非法合并项被丢弃");
+            AreEqual(0, parsed.Collage.Merges[0].Row, "第 1 个合并行");
+            AreEqual(0, parsed.Collage.Merges[0].Col, "第 1 个合并列");
+            AreEqual(2, parsed.Collage.Merges[0].RowSpan, "第 1 个合并行跨度");
+            AreEqual(2, parsed.Collage.Merges[0].ColSpan, "第 1 个合并列跨度");
+            AreEqual(2, parsed.Collage.Merges[1].Row, "第 2 个合并行");
+            AreEqual(1, parsed.Collage.Merges[1].Col, "第 2 个合并列");
+            AreEqual(1, parsed.Collage.Merges[1].RowSpan, "第 2 个合并行跨度");
+            AreEqual(2, parsed.Collage.Merges[1].ColSpan, "第 2 个合并列跨度");
+
+            // 损坏文件（含网格键）仍回退默认值，不抛异常
+            File.WriteAllText(path, "[collage]\r\nGridRows=abc\r\nGridColumns=xyz\r\nGridMerges=;;,\r\n",
+                Encoding.UTF8);
+            AppSettings corrupt = SettingsStore.Load();
+            AreEqual(3, corrupt.Collage.GridRows, "损坏行数回默认 3");
+            AreEqual(3, corrupt.Collage.GridColumns, "损坏列数回默认 3");
+            AreEqual(0, corrupt.Collage.Merges.Count, "损坏合并串返回空列表");
+        });
+    }
+
+    private static void SettingsGridOldConfigDefaults()
+    {
+        string directory = Path.Combine(_tempRoot, "settings_grid_oldconfig");
+        WithSettingsDir(directory, delegate()
+        {
+            Directory.CreateDirectory(directory);
+            File.WriteAllText(SettingsStore.SettingsPath,
+                "; v1.0 旧配置（无网格键）\r\n"
+                + "[collage]\r\n"
+                + "Orientation=Horizontal\r\n"
+                + "Gap=7\r\n"
+                + "Margin=11\r\n"
+                + "[window]\r\n"
+                + "Width=900\r\n"
+                + "Height=650\r\n",
+                Encoding.UTF8);
+
+            AppSettings loaded = SettingsStore.Load();
+            AreEqual(3, loaded.Collage.GridRows, "旧配置缺失行数默认 3");
+            AreEqual(3, loaded.Collage.GridColumns, "旧配置缺失列数默认 3");
+            AreEqual(12, loaded.Collage.RowGap, "旧配置缺失行间距默认 12");
+            AreEqual(12, loaded.Collage.ColumnGap, "旧配置缺失列间距默认 12");
+            AssertTrue(loaded.Collage.Merges != null && loaded.Collage.Merges.Count == 0,
+                "旧配置无合并（非 null 空列表）");
+            AssertTrue(loaded.Collage.ShowGridGuides, "旧配置默认显示辅助线");
+            AreEqual(7, loaded.Collage.Gap, "旧字段间距仍可读");
+            AreEqual(11, loaded.Collage.Margin, "旧字段边距仍可读");
+
+            // 保存升级后网格默认值落盘，再次读取正常
+            SettingsStore.Save(loaded);
+            AppSettings again = SettingsStore.Load();
+            AreEqual(3, again.Collage.GridRows, "升级后行数默认 3");
+            AreEqual(3, again.Collage.GridColumns, "升级后列数默认 3");
+            AreEqual(0, again.Collage.Merges.Count, "升级后无合并");
+        });
+    }
+
     // ---------------------------------------------------------------- 工具方法
+
+    /// <summary>统计两张同尺寸位图在采样点（步长 2）上颜色差异超过容差的像素数；尺寸不同返回 -1。</summary>
+    private static int CountDifferentPixels(Bitmap first, Bitmap second, int tolerance)
+    {
+        if (first.Width != second.Width || first.Height != second.Height)
+        {
+            return -1;
+        }
+        int count = 0;
+        for (int y = 0; y < first.Height; y += 2)
+        {
+            for (int x = 0; x < first.Width; x += 2)
+            {
+                if (!ColorClose(first.GetPixel(x, y), second.GetPixel(x, y), tolerance))
+                {
+                    count++;
+                }
+            }
+        }
+        return count;
+    }
 
     private static void Test(string name, Action action)
     {

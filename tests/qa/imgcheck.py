@@ -5,11 +5,16 @@
   python imgcheck.py diff <a> <b>        -> JSON {ok,same,diff,total,maxdiff}
   python imgcheck.py alpha <file>        -> JSON {ok,min,max}
   python imgcheck.py center <file> <n>   -> JSON {ok,colors:[...]}  # 横向 n 等分中心色
+  python imgcheck.py present <file> <rgba;...> -> JSON {ok,present:[...]}  # 检查颜色是否出现
 """
 import json
 import sys
+import warnings
 
 from PIL import Image, ImageChops
+
+# Pillow 12.x 对 Image.getdata 有弃用警告；静默以免污染 PowerShell stderr（不改变输出 JSON）
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 def out(obj):
@@ -50,6 +55,18 @@ def main():
             arr = np.asarray(diff)
             nonzero = int((arr != 0).any(axis=2).sum()) if arr.ndim == 3 else int((arr != 0).sum())
             out({"ok": True, "same": nonzero == 0, "diff": nonzero, "total": a.size[0] * a.size[1], "maxdiff": int(maxdiff)})
+        elif cmd == "present":
+            im = Image.open(sys.argv[2]).convert("RGBA")
+            lookup = set(im.getdata())
+            found = []
+            for part in sys.argv[3].split(";"):
+                part = part.strip()
+                if not part:
+                    continue
+                rgba = tuple(int(x) for x in part.split(","))
+                if rgba in lookup:
+                    found.append(list(rgba))
+            out({"ok": True, "present": found})
         elif cmd == "center":
             im = Image.open(sys.argv[2]).convert("RGBA")
             n = int(sys.argv[3])

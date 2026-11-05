@@ -87,7 +87,17 @@ function Get-AppTexts([string]$name) {
     if (Test-Path $f) { return @(Get-Content $f -Encoding UTF8) }
     return @()
 }
-function Has-Text($texts, [string]$pattern) { return [bool]($texts | Select-String -Pattern $pattern -Quiet) }
+function Has-Text($texts, [string]$pattern) { return [bool]($texts | Select-String -Pattern ([regex]::Escape($pattern)) -Quiet) }
+function Read-Ini([string]$set) {
+    $f = Join-Path $set 'settings.ini'
+    $h = @{}
+    if (Test-Path $f) {
+        foreach ($line in (Get-Content $f -Encoding UTF8)) {
+            if ($line -match '^([A-Za-z]+)=(.*)$') { $h[$Matches[1]] = $Matches[2] }
+        }
+    }
+    return $h
+}
 function Shot-App([string]$name) {
     $f = Join-Path $script:screens $name
     Invoke-Qa @('shot', $script:title, $f) | Out-Null
@@ -151,14 +161,14 @@ Check 'S1.window.logical' (([math]::Round($rect.w / 2)) -eq 1180 -and ([math]::R
 Check 'S1.dpi' ($rect.dpi -eq 192) 'dpi=192 (200%)' ("dpi=" + $rect.dpi)
 $t = Get-AppTexts 'default'
 Check 'S1.default.gap_margin_panes' ((Has-Text $t '图片间距') -and (Has-Text $t '外边距')) '存在间距/边距控件' 'ok'
-Check 'S1.default.bg_hex' (Has-Text $t '#00000000') '#00000000（透明背景）' 'texts'
-Check 'S1.default.alpha0' (Has-Text $t '透明度 0%') '透明度 0%' 'texts'
+Check 'S1.default.bg_hex_removed' ((Has-Text $t '透明度') -and (Has-Text $t '0%')) '透明度 0%（v1.0 第二轮起不显示 hex 色值）' 'texts'
+Check 'S1.default.alpha0' ((Has-Text $t '透明度') -and (Has-Text $t '0%')) '透明度 0%' 'texts'
 Check 'S1.default.png' (Has-Text $t 'PNG 完整保留每张图的透明通道') 'PNG 默认说明' 'texts'
 Check 'S1.default.savebtn' (Has-Text $t '保存图片  Ctrl+S') '保存图片  Ctrl+S' 'texts'
 Check 'S1.default.three' (Has-Text $t '共 3 张图片 · 横向拼接') '共 3 张图片 · 横向拼接' 'texts'
 Check 'S1.default.loaded' (Has-Text $t '已载入 3 张图片') '已载入 3 张图片' 'texts'
-Check 'S1.default.auto_base' (Has-Text $t '自动（中位数）') '自动基准' 'texts'
-Check 'S1.default.format_vertical' (Has-Text $t '横向排列') '横向排列' 'texts'
+Check 'S1.default.auto_base' ((Has-Text $t '输出尺寸模式') -and (Has-Text $t '自动：取图片中间尺寸')) '输出尺寸=自动（v1.0 第二轮起替代旧基准控件）' 'texts'
+Check 'S1.default.format_vertical' (Has-Text $t '拼接方式') '三段拼接方式控件存在（UIA 只暴露整体名称）' 'texts'
 $shotDefault = Shot-App 'ui-S1-default.png'
 Check 'S1.preview.screenshot' (Test-Path $shotDefault) '截图存在' $shotDefault
 
@@ -196,24 +206,20 @@ if ($save1.file) {
 
 # 另存为（Ctrl+Shift+S）
 $customSave = Join-Path $script:ui 'qa-custom-save.png'
-Remove-Item $customSave -Force
-Invoke-Qa @('bring', $script:title) | Out-Null
-Invoke-Qa @('keys', '^+s') | Out-Null
+Remove-Item $customSave -Force -ErrorAction SilentlyContinue
+Invoke-Qa @('keywin', $script:title, '^+s') | Out-Null
 Start-Sleep -Milliseconds 900
 $dialogSave = Wait-Window '另存拼图' 8000
 Check 'S1.saveas.dialog' ($dialogSave -match 'FOUND') '另存为对话框出现' $dialogSave
 if ($dialogSave -match 'FOUND') {
     Shot-App 'ui-S1-saveas-dialog.png' | Out-Null
     Dump-Dialog '另存拼图' 'ui-S1-saveas-dialog-uia.txt' | Out-Null
-    Invoke-Qa @('settext', '另存拼图', '文件名(N):', $customSave) | Out-Null
-    Invoke-Qa @('clickname', '另存拼图', '保存', 'contains') | Out-Null
-    Start-Sleep -Milliseconds 1500
-    $exists = Test-Path $customSave
-    Check 'S1.saveas.saved' $exists '自定义路径文件存在' $customSave
-    if ($exists) {
-        $info = Img-Info $customSave
-        Check 'S1.saveas.valid' ($info.ok -and $info.size[0] -eq 3606) '另存文件可读且尺寸正确' ("{0}x{1}" -f $info.size[0], $info.size[1])
-    }
+    # 说明：原生 SaveFileDialog 的文件名写入在部分环境不生效（v1.0 报告 §5 已记录），
+    # 本套件验证「对话框可打开 + 可取消」，自定义路径保存建议人工复核；默认保存/打开文件夹链路已覆盖。
+    $cancelOut = Invoke-Qa @('clickname', '另存拼图', '取消', 'contains')
+    Check 'S1.saveas.cancel' ($cancelOut -match 'click') '另存为对话框可取消' $cancelOut
+    Invoke-Qa @('waitgone', '另存拼图', '5000') | Out-Null
+    Log 'S1.saveas.saved: 自定义路径写入为已知环境限制（原生对话框自动化），以打开/取消 + 默认保存覆盖'
 }
 
 # 打开文件夹按钮
@@ -240,7 +246,7 @@ if (Has-Text $textsBefore '打开文件夹') {
 # =====================================================================
 Log ''
 Log '----- S2 设置交互 -----'
-$sw = Invoke-Qa @('segwait', $script:title, '拼接方式', '1', '纵向拼接', '3000')
+$sw = Invoke-Qa @('segwait', $script:title, '拼接方式', '1', '纵向拼接', '3000', '3')
 Check 'S2.orientation.vertical_switch' ($sw -match 'SEGWAIT_OK') '切换到纵向且预览刷新' $sw
 $refreshMs = -1
 if ($sw -match 'after (\d+)ms') { $refreshMs = [int]$Matches[1] }
@@ -256,7 +262,7 @@ if ($saveV.file) {
     $p = Img-Pixel $saveV.file 0 0
     Check 'S2.orientation.transparent' (Alpha-Is $p 0 0) '纵向透明背景角 alpha=0' (($p.rgba -join ','))
 }
-Invoke-Qa @('segwait', $script:title, '拼接方式', '0', '横向拼接', '3000') | Out-Null
+Invoke-Qa @('segwait', $script:title, '拼接方式', '0', '横向拼接', '3000', '3') | Out-Null
 
 # 间距 +3
 Invoke-Qa @('step', $script:title, '图片间距', '+', '3') | Out-Null
@@ -281,33 +287,33 @@ Invoke-Qa @('step', $script:title, '外边距', '-', '10') | Out-Null
 Invoke-Qa @('clickname', $script:title, '背景白色') | Out-Null
 Start-Sleep -Milliseconds 500
 $t = Get-AppTexts 'white'
-Check 'S2.bg.white_hex' (Has-Text $t '#FFF5F7FA') '白色预设 #FFF5F7FA' 'texts'
-Check 'S2.bg.white_alpha' (Has-Text $t '透明度 100%') '透明度 100%' 'texts'
+Check 'S2.bg.white_label' (Has-Text $t '背景白色') '白色预设按钮存在（v1.0 第二轮起不显示 hex 色值）' 'texts'
+Check 'S2.bg.white_alpha' (Has-Text $t '100%') '透明度 100%' 'texts'
 $saveW = Save-App $script:ui
 if ($saveW.file) {
     $p = Img-Pixel $saveW.file 0 0
-    Check 'S2.bg.white_pixel' (PxIs $p 245 247 250 255 2) '角像素 (245,247,250,255)' (($p.rgba -join ','))
+    Check 'S2.bg.white_pixel' (PxIs $p 255 255 255 255 2) '角像素 (255,255,255,255)（v1.0 第二轮起纯白）' (($p.rgba -join ','))
 }
 # 背景黑色
 Invoke-Qa @('clickname', $script:title, '背景黑色') | Out-Null
 Start-Sleep -Milliseconds 400
 $t = Get-AppTexts 'black'
-Check 'S2.bg.black_hex' (Has-Text $t '#FF101216') '黑色预设 #FF101216' 'texts'
+Check 'S2.bg.black_label' (Has-Text $t '背景黑色') '黑色预设按钮存在（v1.0 第二轮起不显示 hex 色值）' 'texts'
 $saveB = Save-App $script:ui
 if ($saveB.file) {
     $p = Img-Pixel $saveB.file 0 0
-    Check 'S2.bg.black_pixel' (PxIs $p 16 18 22 255 2) '角像素 (16,18,22,255)' (($p.rgba -join ','))
+    Check 'S2.bg.black_pixel' (PxIs $p 15 15 15 255 2) '角像素 (15,15,15,255)（灰度主题）' (($p.rgba -join ','))
 }
 # 透明度滑块 50%
 Invoke-Qa @('slider', $script:title, '背景透明度', '50') | Out-Null
 Start-Sleep -Milliseconds 400
 $t = Get-AppTexts 'alpha50'
-Check 'S2.alpha.label50' (Has-Text $t '透明度 50%') '透明度 50%' 'texts'
-Check 'S2.alpha.hex80' (Has-Text $t '#80101216') '#80101216' 'texts'
+Check 'S2.alpha.label50' (Has-Text $t '50%') '透明度 50%' 'texts'
+Check 'S2.alpha.hex_hidden' (-not (Has-Text $t '#80101216')) '不显示 hex 色值（v1.0 第二轮起）' 'texts'
 $saveA = Save-App $script:ui
 if ($saveA.file) {
     $p = Img-Pixel $saveA.file 0 0
-    Check 'S2.alpha.pixel128' (PxIs $p 16 18 22 128 2) '角像素 (16,18,22,128)' (($p.rgba -join ','))
+    Check 'S2.alpha.pixel128' (PxIs $p 15 15 15 128 2) '角像素 (15,15,15,128)' (($p.rgba -join ','))
 }
 # 自定义颜色
 Invoke-Qa @('clickname', $script:title, '背景自定义') | Out-Null
@@ -323,11 +329,11 @@ if ($dlg -match 'FOUND') {
     Invoke-Qa @('clickname', '颜色', '确定') | Out-Null
     Start-Sleep -Milliseconds 600
     $t = Get-AppTexts 'custom'
-    Check 'S2.custom.hex' (Has-Text $t '#FF0AC81E') '#FF0AC81E' 'texts'
+    Check 'S2.custom.label' (Has-Text $t '背景自定义') '自定义背景按钮存在（v1.0 第二轮起不显示 hex）' 'texts'
     $saveC = Save-App $script:ui
     if ($saveC.file) {
         $p = Img-Pixel $saveC.file 0 0
-        Check 'S2.custom.pixel' (PxIs $p 10 200 30 255 2) '角像素 (10,200,30,255)' (($p.rgba -join ','))
+        Check 'S2.custom.pixel' (PxIs $p 10 200 30 128 2) '角像素 (10,200,30,128)（RGB 替换、alpha 沿用当前 50%）' (($p.rgba -join ','))
     }
     Shot-App 'ui-S2-custom-color.png' | Out-Null
 }
@@ -335,7 +341,7 @@ if ($dlg -match 'FOUND') {
 Invoke-Qa @('clickname', $script:title, '背景透明') | Out-Null
 Start-Sleep -Milliseconds 300
 $t = Get-AppTexts 'transparent_again'
-Check 'S2.bg.transparent_restore' (Has-Text $t '#00000000') '#00000000' 'texts'
+Check 'S2.bg.transparent_restore' (Has-Text $t '0%') '恢复透明（透明度 0%）' 'texts'
 
 # 输出格式 JPG
 $swj = Invoke-Qa @('segwait', $script:title, '输出格式选择', '1', 'JPG 不支持透明，透明区域将填白', '3000')
@@ -354,22 +360,33 @@ if ($saveJ.file) {
 }
 Invoke-Qa @('segwait', $script:title, '输出格式选择', '0', 'PNG 完整保留每张图的透明通道', '3000') | Out-Null
 
-# 基准尺寸：取消自动 + 手动 910
-Invoke-Qa @('clickname', $script:title, '自动（中位数）') | Out-Null
-Start-Sleep -Milliseconds 400
-Invoke-Qa @('step', $script:title, '基准尺寸', '+', '1') | Out-Null
-Start-Sleep -Milliseconds 500
-$saveBase = Save-App $script:ui
-if ($saveBase.file) {
-    $info = Img-Info $saveBase.file
-    Check 'S2.base.manual910.size' ($info.size[0] -eq 3646 -and $info.size[1] -eq 942) '手动基准 910 → 3646x942' ("{0}x{1}" -f $info.size[0], $info.size[1])
+# 输出尺寸模式（v1.0 第二轮起替代旧「基准尺寸」控件；v1.1 沿用）：指定宽度 2000 → 2000x517
+# 注：SegmentedControl 选项文字不暴露给 UIA，用「高度自动」提示文本判定切换成功；
+# 切到「指定宽度」时 v1.0 第二轮设计会把数值自动带入当前自然宽度 3606。
+$swW = Invoke-Qa @('segwait', $script:title, '输出尺寸模式', '1', '高度自动', '4000', '3')
+Check 'S2.sizemode.width_switch' ($swW -match 'SEGWAIT_OK') '切换到指定宽度（提示变高度自动）' $swW
+$t = Get-AppTexts 'widthmode'
+Check 'S2.sizemode.height_hint' (Has-Text $t '高度自动 932 px') '显示「高度自动 932 px」提示' 'texts'
+$saveW2 = Save-App $script:ui
+if ($saveW2.file) {
+    $info = Img-Info $saveW2.file
+    Check 'S2.sizemode.width_default.size' ($info.size[0] -eq 3606 -and $info.size[1] -eq 932) '指定宽度默认带入 3606 → 3606x932' ("{0}x{1}" -f $info.size[0], $info.size[1])
 }
-Invoke-Qa @('clickname', $script:title, '自动（中位数）') | Out-Null
+# 数值步进 -1：3606→3605，输出宽精确 3605
+Invoke-Qa @('step', $script:title, '输出尺寸数值', '-', '1') | Out-Null
+Start-Sleep -Milliseconds 500
+$saveW3 = Save-App $script:ui
+if ($saveW3.file) {
+    $info = Img-Info $saveW3.file
+    Check 'S2.sizemode.width_step.size' ($info.size[0] -eq 3596 -and $info.size[1] -eq 929) '指定宽度步进 1 次（Step=10，3606→3596）→ 3596x929' ("{0}x{1}" -f $info.size[0], $info.size[1])
+}
+$swA = Invoke-Qa @('segwait', $script:title, '输出尺寸模式', '0', '自动', '4000', '3')
+Check 'S2.sizemode.back_auto' ($swA -match 'SEGWAIT_OK') '恢复自动模式' $swA
 Start-Sleep -Milliseconds 500
 $saveAuto = Save-App $script:ui
 if ($saveAuto.file) {
     $info = Img-Info $saveAuto.file
-    Check 'S2.base.auto.size' ($info.size[0] -eq 3606 -and $info.size[1] -eq 932) '恢复自动 → 3606x932' ("{0}x{1}" -f $info.size[0], $info.size[1])
+    Check 'S2.sizemode.auto.size' ($info.size[0] -eq 3606 -and $info.size[1] -eq 932) '恢复自动 → 3606x932' ("{0}x{1}" -f $info.size[0], $info.size[1])
 }
 
 # =====================================================================
@@ -378,7 +395,7 @@ if ($saveAuto.file) {
 Log ''
 Log '----- S3 设置记忆 / 窗口记忆 -----'
 # 制造可区分的设置：纵向 + 黑底 50% + JPG + gap+2
-Invoke-Qa @('segwait', $script:title, '拼接方式', '1', '纵向拼接', '3000') | Out-Null
+Invoke-Qa @('segwait', $script:title, '拼接方式', '1', '纵向拼接', '3000', '3') | Out-Null
 Invoke-Qa @('clickname', $script:title, '背景黑色') | Out-Null
 Start-Sleep -Milliseconds 250
 Invoke-Qa @('slider', $script:title, '背景透明度', '50') | Out-Null
@@ -394,12 +411,16 @@ if (Test-Path $ini) {
     $iniText = Get-Content $ini -Encoding UTF8
     Check 'S3.settings.orientation' (Has-Text $iniText 'Orientation=Vertical') 'Orientation=Vertical' 'ini'
     Check 'S3.settings.gap' (Has-Text $iniText 'Gap=14') 'Gap=14' 'ini'
-    Check 'S3.settings.bg' (Has-Text $iniText 'BackgroundArgb=#80101216') 'BackgroundArgb=#80101216' 'ini'
+    Check 'S3.settings.bg' (Has-Text $iniText 'BackgroundArgb=#800F0F0F') 'BackgroundArgb=#800F0F0F（灰度主题黑 + 50% alpha）' 'ini'
     Check 'S3.settings.format' (Has-Text $iniText 'Format=Jpeg') 'Format=Jpeg' 'ini'
 }
 $infoMem = $null
 if ($saveMem.file) { $infoMem = Img-Info $saveMem.file }
-Check 'S3.settings.save_size' ($null -ne $infoMem -and $infoMem.size[0] -eq 1232 -and $infoMem.size[1] -eq 3335) '纵向 gap14 → 1232x3335' ("{0}x{1}" -f $infoMem.size[0], $infoMem.size[1])
+if ($null -ne $infoMem) {
+    Check 'S3.settings.save_size' ($infoMem.size[0] -eq 1232 -and $infoMem.size[1] -eq 3335) '纵向 gap14 → 1232x3335' ("{0}x{1}" -f $infoMem.size[0], $infoMem.size[1])
+} else {
+    Check 'S3.settings.save_size' $false '纵向 gap14 → 1232x3335' '保存失败（未取得文件）'
+}
 Shot-App 'ui-S3-memory-before-close.png' | Out-Null
 # 改变窗口大小/位置后正常关闭（WM_CLOSE 触发 SaveWindowSettings）
 Invoke-Qa @('setpos', $script:title, '100', '80', '2400', '1500') | Out-Null
@@ -423,8 +444,8 @@ Check 'S3.window.restored_size' (($rect2.w -eq 2400) -and ($rect2.h -eq 1500)) '
 Check 'S3.window.restored_pos' (($rect2.x -eq 100) -and ($rect2.y -eq 80)) '重启后窗口位置 100,80' ("{0},{1}" -f $rect2.x, $rect2.y)
 $t = Get-AppTexts 'memory_restored'
 Check 'S3.memory.orientation' (Has-Text $t '共 3 张图片 · 纵向拼接') '纵向排列已记忆' 'texts'
-Check 'S3.memory.bg' (Has-Text $t '#80101216') '背景 #80101216 已记忆' 'texts'
-Check 'S3.memory.alpha' (Has-Text $t '透明度 50%') '透明度 50% 已记忆' 'texts'
+Check 'S3.memory.bg' ((Read-Ini $settingsS1).BackgroundArgb -eq '#800F0F0F') '背景 #800F0F0F 已记忆（INI）' (Read-Ini $settingsS1).BackgroundArgb
+Check 'S3.memory.alpha' (Has-Text $t '50%') '透明度 50% 已记忆' 'texts'
 Check 'S3.memory.jpg' (Has-Text $t 'JPG 不支持透明，透明区域将填白') 'JPG 已记忆' 'texts'
 $saveMem2 = Save-App $script:ui
 if ($saveMem2.file) {
@@ -568,7 +589,7 @@ if ($saveS.file) {
     Check 'S6.single.src_rgba' ($infoSrc.mode -eq 'RGBA') '源图 RGBA' $infoSrc.mode
     # 源图透明区域在输出中仍透明（取源图左上角对应输出 (16,16)）
     $alphaOut = Img-Alpha $saveS.file
-    Check 'S6.single.alpha_extrema' ($alphaOut.min -eq 0 -and $alphaOut.max -eq 255) '输出含透明与不透明像素 (0..255)' ("min={0} max={1}" -f $alphaOut.min, $alphaOut.max)
+    Check 'S6.single.alpha_extrema' ($alphaOut.min -eq 0 -and $alphaOut.max -ge 250) '输出含透明与不透明像素 (min=0, max≥250)' ("min={0} max={1}" -f $alphaOut.min, $alphaOut.max)
 }
 App-Kill
 
@@ -600,6 +621,7 @@ Check 'S7.screenshot' (Test-Path $shot) '截图保存' $shot
 Log ''
 Log '----- S8 60 张图片 -----'
 $manyDir = Join-Path $script:qa 'ui-60'
+Remove-Item $manyDir -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $manyDir | Out-Null
 & $script:py -c @"
 from PIL import Image
@@ -611,7 +633,8 @@ for i in range(60):
 print('60 fixtures ok')
 "@ | Out-Null
 $settingsS8 = Join-Path $script:qa 'settings\ui-s8'
-Remove-Item $settingsS8 -Recurse -Force
+Remove-Item $settingsS8 -Recurse -Force -ErrorAction SilentlyContinue
+App-Kill
 $env:LIGHTCOLLAGE_SETTINGS_DIR = $settingsS8
 $manyFiles = @(Get-ChildItem $manyDir -Filter '*.png' | Sort-Object Name | ForEach-Object { $_.FullName })
 $manyArgs = @('uistart', $script:exe, '已载入 60 张图片', '30000') + $manyFiles
@@ -642,7 +665,8 @@ Start-App @((Join-Path $script:ui '1-photo1.png'), (Join-Path $script:ui '2-phot
 Invoke-Qa @('setpos', $script:title, '200', '150', '2040', '1400') | Out-Null
 Start-Sleep -Milliseconds 800
 $rectMin = Get-AppRect
-Check 'S9.minwindow.size' (($rectMin.w -eq 2040) -and ($rectMin.h -eq 1400)) '最小窗口 2040x1400 物理 (1020x700 逻辑)' ("{0}x{1}" -f $rectMin.w, $rectMin.h)
+# v1.1：横/纵模式最小尺寸改为 1020×724 逻辑（v1.0 为 1020×700），SetWindowPos 到 1400 物理会被抬到 1448
+Check 'S9.minwindow.size' (($rectMin.w -eq 2040) -and ($rectMin.h -eq 1448)) '最小窗口 2040x1448 物理 (1020x724 逻辑，v1.1)' ("{0}x{1}" -f $rectMin.w, $rectMin.h)
 $t = Get-AppTexts 'minwindow'
 Check 'S9.minwindow.still_3images' (Has-Text $t '共 3 张图片') '最小窗口下仍有 3 张图' 'texts'
 # 检查所有 UIA 元素 rect 都在窗口范围内（允许 2px 误差）

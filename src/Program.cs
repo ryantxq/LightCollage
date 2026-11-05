@@ -201,18 +201,53 @@ namespace LightCollage.App
                 CollageSettings settings = new CollageSettings();
                 string output = null;
                 List<string> files = new List<string>();
+                bool rowGapSet = false;
+                bool columnGapSet = false;
+                string mergesText = null;
                 for (int i = 1; i < args.Length; i++)
                 {
                     string arg = args[i];
                     if (arg == "--layout" && i + 1 < args.Length)
                     {
                         string value = args[++i].ToLowerInvariant();
-                        settings.Orientation = (value == "v" || value == "vertical")
-                            ? CollageOrientation.Vertical : CollageOrientation.Horizontal;
+                        if (value == "v" || value == "vertical")
+                        {
+                            settings.Orientation = CollageOrientation.Vertical;
+                        }
+                        else if (value == "g" || value == "grid")
+                        {
+                            settings.Orientation = CollageOrientation.Grid;
+                        }
+                        else
+                        {
+                            settings.Orientation = CollageOrientation.Horizontal;
+                        }
                     }
                     else if (arg == "--gap" && i + 1 < args.Length)
                     {
                         settings.Gap = ParseInt(args[++i], 0, 200, settings.Gap);
+                    }
+                    else if (arg == "--rows" && i + 1 < args.Length)
+                    {
+                        settings.GridRows = ParseInt(args[++i], 1, 20, settings.GridRows);
+                    }
+                    else if (arg == "--cols" && i + 1 < args.Length)
+                    {
+                        settings.GridColumns = ParseInt(args[++i], 1, 20, settings.GridColumns);
+                    }
+                    else if (arg == "--row-gap" && i + 1 < args.Length)
+                    {
+                        settings.RowGap = ParseInt(args[++i], 0, 200, settings.RowGap);
+                        rowGapSet = true;
+                    }
+                    else if (arg == "--col-gap" && i + 1 < args.Length)
+                    {
+                        settings.ColumnGap = ParseInt(args[++i], 0, 200, settings.ColumnGap);
+                        columnGapSet = true;
+                    }
+                    else if (arg == "--merge" && i + 1 < args.Length)
+                    {
+                        mergesText = args[++i];
                     }
                     else if (arg == "--margin" && i + 1 < args.Length)
                     {
@@ -264,9 +299,28 @@ namespace LightCollage.App
                         files.Add(arg);
                     }
                 }
+                if (settings.Orientation == CollageOrientation.Grid)
+                {
+                    // 网格：行/列间距未显式指定时回落到 --gap（再缺省为 12）。
+                    if (!rowGapSet)
+                    {
+                        settings.RowGap = settings.Gap;
+                    }
+                    if (!columnGapSet)
+                    {
+                        settings.ColumnGap = settings.Gap;
+                    }
+                    if (!string.IsNullOrEmpty(mergesText))
+                    {
+                        settings.Merges = GridLayout.ParseMerges(mergesText, settings.GridRows, settings.GridColumns);
+                    }
+                }
                 if (string.IsNullOrEmpty(output) || files.Count == 0)
                 {
-                    Console.Error.WriteLine("用法：LightCollage.exe --compose --layout h|v --gap N --margin N --bg #AARRGGBB --base auto|N --out-width N | --out-height N --format png|jpg --out FILE image1 [image2 ...]");
+                    Console.Error.WriteLine("用法：LightCollage.exe --compose --layout h|v|g [--gap N] [--margin N] [--bg #AARRGGBB] [--base auto|N]");
+                    Console.Error.WriteLine("       [--out-width N | --out-height N] [--format png|jpg] [--quality 1-100]");
+                    Console.Error.WriteLine("       网格：--rows N --cols N --row-gap N --col-gap N --merge \"1,1,2,2;3,3,3,4\"");
+                    Console.Error.WriteLine("       --out FILE image1 [image2 ...]");
                     return 2;
                 }
 
@@ -340,6 +394,9 @@ namespace LightCollage.App
             Console.WriteLine("  LightCollage.exe --register [--quiet]  安装右键菜单");
             Console.WriteLine("  LightCollage.exe --unregister [--quiet] 卸载右键菜单");
             Console.WriteLine("  LightCollage.exe --compose [选项] 图片... 无界面拼接（测试/自动化）");
+            Console.WriteLine("      选项：--layout h|v|g --gap N --margin N --bg #AARRGGBB --base auto|N --out-width N | --out-height N");
+            Console.WriteLine("            --format png|jpg --quality 1-100 --out FILE");
+            Console.WriteLine("      网格：--rows N --cols N --row-gap N --col-gap N --merge \"1,1,2,2;3,3,3,4\"");
             Console.WriteLine("  LightCollage.exe --version / --help");
         }
 

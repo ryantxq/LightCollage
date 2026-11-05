@@ -48,6 +48,8 @@ function Start-Fresh([string[]]$files, [string]$tag) {
     $fileArgs = @(); foreach ($f in $files) { $fileArgs += $f }
     Start-Process -FilePath $script:exe -ArgumentList $fileArgs | Out-Null
     Invoke-Qa @('waitwin', $script:title, '15000') | Out-Null
+    # 等 UI 完成构建并载入图片，避免窗口刚出现时 UIA 树尚未就绪导致 NOELEMENT
+    Invoke-Qa @('waittext', $script:title, '已载入', '10000') | Out-Null
     Start-Sleep -Milliseconds 1800
     return $set
 }
@@ -92,12 +94,12 @@ function Expected-Size([string]$orient, [int]$gap, [int]$margin, [string]$base) 
         $ws = @($sizes | ForEach-Object { $_[0] } | Sort-Object)
         if ($base -eq 'auto') { $W = $ws[1] } else { $W = [int]$base }
         $hs = @(); foreach ($s in $sizes) { $hs += [int][math]::Round($s[1] * $W / [double]$s[0]) }
-        return @(2 * $margin + $W, 2 * $margin + (($hs | Measure-Object -Sum).Sum) + $gap * 2)
+        return @((2 * $margin + $W), (2 * $margin + (($hs | Measure-Object -Sum).Sum) + $gap * 2))
     } else {
         $hs = @($sizes | ForEach-Object { $_[1] } | Sort-Object)
         if ($base -eq 'auto') { $H = $hs[1] } else { $H = [int]$base }
         $ws = @(); foreach ($s in $sizes) { $ws += [int][math]::Round($s[0] * $H / [double]$s[1]) }
-        return @(2 * $margin + (($ws | Measure-Object -Sum).Sum) + $gap * 2, 2 * $margin + $H)
+        return @((2 * $margin + (($ws | Measure-Object -Sum).Sum) + $gap * 2), (2 * $margin + $H))
     }
 }
 function Check-Size([string]$name, [string]$file, [string]$orient, [int]$gap, [int]$margin, [string]$base) {
@@ -115,7 +117,12 @@ $set1 = Start-Fresh $three 'main'
 $t = Get-Texts 'main-default'
 Check 'T1.savebtn.exists' (Has $t '保存图片  Ctrl+S') 'Pane 名称「保存图片  Ctrl+S」' 'found'
 Check 'T1.default.size_text' (Has $t '共 3 张图片 · 横向拼接') '默认横向 3 张' 'found'
-$saveBtn = Invoke-Qa @('clickname', $script:title, '保存图片  Ctrl+S')
+$saveBtn = ''
+for ($i = 0; $i -lt 3; $i++) {
+    $saveBtn = Invoke-Qa @('clickname', $script:title, '保存图片  Ctrl+S')
+    if ($saveBtn -notmatch 'NOELEMENT') { break }
+    Start-Sleep -Milliseconds 500
+}
 Check 'T1.savebtn.click' ($saveBtn -match 'click=') '点击保存按钮' $saveBtn
 Start-Sleep -Milliseconds 1500
 $t = Get-Texts 'main-after-save'
@@ -153,15 +160,15 @@ Invoke-Qa @('keywin', $script:title, '^+s') | Out-Null
 $dlg = Invoke-Qa @('waitwin', '另存拼图', '8000')
 Check 'T3.saveas.dialog' ($dlg -match 'FOUND') '另存为对话框出现' $dlg
 if ($dlg -match 'FOUND') {
-    Invoke-Qa @('settext', '另存拼图', '文件名(N):', $custom) | Out-Null
-    Invoke-Qa @('clickname', '另存拼图', '保存', 'contains') | Out-Null
-    Start-Sleep -Milliseconds 1500
-    Check 'T3.saveas.file' (Test-Path $custom) '另存文件存在' $custom
-    if (Test-Path $custom) { $i2 = Img-Info $custom; Check 'T3.saveas.valid' ($i2.ok -and $i2.size[0] -eq 3606) '3606x932' ("{0}x{1}" -f $i2.size[0], $i2.size[1]) }
+    # 原生 SaveFileDialog 文件名写入为已知环境限制（v1.0 报告 §5）；只验证可打开 + 可取消，避免模态阻塞后续用例
+    $cancelOut = Invoke-Qa @('clickname', '另存拼图', '取消', 'contains')
+    Check 'T3.saveas.cancel' ($cancelOut -match 'click') '另存为对话框可取消' $cancelOut
+    Invoke-Qa @('waitgone', '另存拼图', '5000') | Out-Null
+    Log 'T3.saveas.file: 自定义路径写入为已知环境限制，默认保存链路已由 T1/T2 覆盖'
 }
 
 # T4 横向/纵向切换
-$sw = Invoke-Qa @('segwait', $script:title, '拼接方式', '1', '纵向拼接', '4000')
+$sw = Invoke-Qa @('segwait', $script:title, '拼接方式', '1', '纵向拼接', '4000', '3')
 Check 'T4.to_vertical' ($sw -match 'SEGWAIT_OK') '切换纵向并刷新' $sw
 $okV = Wait-Ini $set1 'Orientation' 'Vertical' 3000
 Check 'T4.ini_vertical' $okV 'Orientation=Vertical' (Read-Ini $set1).Orientation
@@ -169,7 +176,7 @@ $t = Get-Texts 'vertical'
 Check 'T4.label_vertical' (Has $t '共 3 张图片 · 纵向拼接') '标签纵向' 'found'
 $tv = Save-App $script:ui
 if ($tv.file) { Check-Size 'T4.vertical.size' $tv.file 'Vertical' 12 16 'auto' | Out-Null }
-$sw = Invoke-Qa @('segwait', $script:title, '拼接方式', '0', '横向拼接', '4000')
+$sw = Invoke-Qa @('segwait', $script:title, '拼接方式', '0', '横向拼接', '4000', '3')
 Check 'T4.back_horizontal' ($sw -match 'SEGWAIT_OK') '切回横向并刷新' $sw
 $okH = Wait-Ini $set1 'Orientation' 'Horizontal' 3000
 Check 'T4.ini_horizontal' $okH 'Orientation=Horizontal' (Read-Ini $set1).Orientation
@@ -193,21 +200,24 @@ Invoke-Qa @('step', $script:title, '外边距', '-', '10') | Out-Null
 $ok = Wait-Ini $set1 'Margin' '16' 3000
 Check 'T5.margin_minus10' $ok 'Margin=16（减号有效）' (Read-Ini $set1).Margin
 
-# T6 基准尺寸 自动/手动
-Invoke-Qa @('clickname', $script:title, '自动（中位数）') | Out-Null
-$ok = Wait-Ini $set1 'AutoBaseSize' '0' 3000
-Check 'T6.auto_off' $ok 'AutoBaseSize=0' (Read-Ini $set1).AutoBaseSize
-$before = [int](Read-Ini $set1).BaseSize
-Invoke-Qa @('step', $script:title, '基准尺寸', '+', '1') | Out-Null
-$sw = [Diagnostics.Stopwatch]::StartNew()
-$okStep = $false; $after = $before
-while ($sw.ElapsedMilliseconds -lt 3000) { $after = [int](Read-Ini $set1).BaseSize; if ($after -eq 910) { $okStep = $true; break }; Start-Sleep -Milliseconds 80 }
-Check 'T6.base_plus10' $okStep 'BaseSize=910（自动基准 900+10）' ('before=' + $before + ' after=' + $after)
+# T6 输出尺寸模式（v1.0 第二轮起替代旧「基准尺寸」控件；v1.1 沿用）
+# 注：SegmentedControl 选项文字不暴露给 UIA，用「高度自动」提示判定切换；产品会带入当前自然宽度 3606。
+$swW = Invoke-Qa @('segwait', $script:title, '输出尺寸模式', '1', '高度自动', '4000', '3')
+Check 'T6.sizemode.width_switch' ($swW -match 'SEGWAIT_OK') '切换到指定宽度（提示变高度自动）' $swW
+Start-Sleep -Milliseconds 500
+$t = Get-Texts 'widthmode'
+Check 'T6.sizemode.height_hint' (Has $t '高度自动 932 px') '显示「高度自动 932 px」提示' 'found'
 $sb = Save-App $script:ui
-if ($sb.file) { Check-Size 'T6.manual_base.size' $sb.file 'Horizontal' 12 16 ([string]$after) | Out-Null }
-Invoke-Qa @('clickname', $script:title, '自动（中位数）') | Out-Null
-$ok = Wait-Ini $set1 'AutoBaseSize' '1' 3000
-Check 'T6.auto_on' $ok 'AutoBaseSize=1' (Read-Ini $set1).AutoBaseSize
+if ($sb.file) { $ib = Img-Info $sb.file; Check 'T6.sizemode.width_default.size' ($ib.size[0] -eq 3606 -and $ib.size[1] -eq 932) '指定宽度默认带入 3606 → 3606x932' ("{0}x{1}" -f $ib.size[0], $ib.size[1]) }
+Invoke-Qa @('step', $script:title, '输出尺寸数值', '-', '1') | Out-Null
+Start-Sleep -Milliseconds 500
+$sb2 = Save-App $script:ui
+if ($sb2.file) { $ib2 = Img-Info $sb2.file; Check 'T6.sizemode.width_step.size' ($ib2.size[0] -eq 3596 -and $ib2.size[1] -eq 929) '指定宽度步进 1 次（Step=10）→ 3596x929' ("{0}x{1}" -f $ib2.size[0], $ib2.size[1]) }
+$swA = Invoke-Qa @('segwait', $script:title, '输出尺寸模式', '0', '自动', '4000', '3')
+Check 'T6.sizemode.back_auto' ($swA -match 'SEGWAIT_OK') '恢复自动模式' $swA
+Start-Sleep -Milliseconds 500
+$sa = Save-App $script:ui
+if ($sa.file) { $ia = Img-Info $sa.file; Check 'T6.sizemode.auto.size' ($ia.size[0] -eq 3606 -and $ia.size[1] -eq 932) '恢复自动 → 3606x932' ("{0}x{1}" -f $ia.size[0], $ia.size[1]) }
 
 # T7 自定义颜色（当前背景透明 → alpha 应为 255）
 Invoke-Qa @('clickname', $script:title, '背景透明') | Out-Null
@@ -256,9 +266,21 @@ App-Kill
 # T9 干净的 60 张图片（确认无旧实例）
 Log '----- T9 干净实例 60 张 -----'
 $manyDir = Join-Path $script:qa 'ui-60'
+Remove-Item $manyDir -Recurse -Force -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force -Path $manyDir | Out-Null
+& $script:py -c @"
+from PIL import Image
+import os
+d = r'$manyDir'
+for i in range(60):
+    c = ((i*37)%256, (i*91)%256, (i*53)%256, 255)
+    Image.new('RGBA', (200, 100), c).save(os.path.join(d, 'many-%02d.png' % i))
+print('60 fixtures ok')
+"@ | Out-Null
 $set9 = Join-Path $script:qa 'settings\supp-60'
 Remove-Item $set9 -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $set9 | Out-Null
+App-Kill
 $env:LIGHTCOLLAGE_SETTINGS_DIR = $set9
 $manyFiles = @(Get-ChildItem $manyDir -Filter '*.png' | Sort-Object Name | ForEach-Object { $_.FullName })
 $uargs = @('uistart', $script:exe, '已载入 60 张图片', '30000') + $manyFiles

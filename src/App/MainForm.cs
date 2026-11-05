@@ -40,6 +40,17 @@ namespace LightCollage.App
         private Label _marginLabel;
         private Stepper _gapStep;
         private Stepper _marginStep;
+        private Label _gridSection;
+        private Label _rowCountLabel;
+        private Label _columnCountLabel;
+        private Label _rowGapLabel;
+        private Label _columnGapLabel;
+        private Stepper _rowsStep;
+        private Stepper _columnsStep;
+        private Stepper _rowGapStep;
+        private Stepper _columnGapStep;
+        private AccentButton _mergeCellsButton;
+        private CheckBoxX _gridGuidesCheck;
         private Label _backgroundSection;
         private ColorSwatchButton _swatchTransparent;
         private ColorSwatchButton _swatchWhite;
@@ -162,6 +173,8 @@ namespace LightCollage.App
 
             _preview = new PreviewPanel();
             _preview.AddRequested += delegate { ShowAddDialog(); };
+            _preview.SwapRequested += SwapItems;
+            _preview.DragStatusChanged += delegate(string text, bool warn) { SetStatus(text, warn); };
             Controls.Add(_preview);
 
             _strip = new ThumbnailStrip();
@@ -191,9 +204,9 @@ namespace LightCollage.App
             _orientationSection = NewSection("拼接方式");
             _sidePanel.Controls.Add(_orientationSection);
             _orientationSeg = new SegmentedControl();
-            _orientationSeg.Items = new string[] { "横向排列", "纵向排列" };
+            _orientationSeg.Items = new string[] { "横向排列", "纵向排列", "网格" };
             _orientationSeg.AccessibleName = "拼接方式";
-            _orientationSeg.Text = "拼接方式选项";
+            _orientationSeg.Text = "拼接方式选项（横向排列 / 纵向排列 / 网格）";
             _orientationSeg.SelectedIndexChanged += OrientationChanged;
             _sidePanel.Controls.Add(_orientationSeg);
 
@@ -213,6 +226,59 @@ namespace LightCollage.App
             _marginStep.ValueChanged += MarginValueChanged;
             _sidePanel.Controls.Add(_gapStep);
             _sidePanel.Controls.Add(_marginStep);
+
+            // ---- v1.1 网格设置区（仅「网格」拼接方式下显示；外边距沿用上面的控件，在网格模式下重排进本区）
+            _gridSection = NewSection("网格");
+            _gridSection.AccessibleName = "网格设置";
+            _sidePanel.Controls.Add(_gridSection);
+            _rowCountLabel = NewGridParamLabel("行数");
+            _columnCountLabel = NewGridParamLabel("列数");
+            _rowGapLabel = NewGridParamLabel("行间距");
+            _columnGapLabel = NewGridParamLabel("列间距");
+            _rowCountLabel.AccessibleName = "行数标签";
+            _columnCountLabel.AccessibleName = "列数标签";
+            _rowGapLabel.AccessibleName = "行间距标签";
+            _columnGapLabel.AccessibleName = "列间距标签";
+            _sidePanel.Controls.Add(_rowCountLabel);
+            _sidePanel.Controls.Add(_columnCountLabel);
+            _sidePanel.Controls.Add(_rowGapLabel);
+            _sidePanel.Controls.Add(_columnGapLabel);
+            _rowsStep = NewStepper(GridLayout.MinRowsOrColumns, GridLayout.MaxRowsOrColumns, 1);
+            _columnsStep = NewStepper(GridLayout.MinRowsOrColumns, GridLayout.MaxRowsOrColumns, 1);
+            _rowGapStep = NewStepper(0, GridLayout.MaxGapOrMargin, 1);
+            _columnGapStep = NewStepper(0, GridLayout.MaxGapOrMargin, 1);
+            _rowsStep.AccessibleName = "行数";
+            _rowsStep.Text = "网格行数调节";
+            _columnsStep.AccessibleName = "列数";
+            _columnsStep.Text = "网格列数调节";
+            _rowGapStep.AccessibleName = "行间距";
+            _rowGapStep.Text = "行间距调节";
+            _columnGapStep.AccessibleName = "列间距";
+            _columnGapStep.Text = "列间距调节";
+            _rowsStep.ValueChanged += GridRowsChanged;
+            _columnsStep.ValueChanged += GridColumnsChanged;
+            _rowGapStep.ValueChanged += RowGapChanged;
+            _columnGapStep.ValueChanged += ColumnGapChanged;
+            _sidePanel.Controls.Add(_rowsStep);
+            _sidePanel.Controls.Add(_columnsStep);
+            _sidePanel.Controls.Add(_rowGapStep);
+            _sidePanel.Controls.Add(_columnGapStep);
+            _mergeCellsButton = new AccentButton();
+            _mergeCellsButton.Text = "合并单元格…";
+            _mergeCellsButton.AccessibleName = "合并单元格";
+            _mergeCellsButton.Style = ButtonStyle.Secondary;
+            _mergeCellsButton.Font = Theme.FontSmall;
+            _mergeCellsButton.Height = Theme.S(this, 30);
+            _mergeCellsButton.BackColor = Theme.PanelBg;
+            _mergeCellsButton.Click += delegate { OpenGridMergeDialog(); };
+            _sidePanel.Controls.Add(_mergeCellsButton);
+            _gridGuidesCheck = new CheckBoxX();
+            _gridGuidesCheck.Text = "显示网格辅助线";
+            _gridGuidesCheck.AccessibleName = "显示网格辅助线";
+            _gridGuidesCheck.BackColor = Theme.PanelBg;
+            _gridGuidesCheck.CheckedChanged += GridGuidesChanged;
+            _sidePanel.Controls.Add(_gridGuidesCheck);
+            SetGridControlsVisible(false);
 
             _backgroundSection = NewSection("背景");
             _sidePanel.Controls.Add(_backgroundSection);
@@ -279,6 +345,13 @@ namespace LightCollage.App
             _toolTip.SetToolTip(_sizeStep, "点击数字区域可直接键盘输入，回车确认。");
             _toolTip.SetToolTip(_alphaSlider, "背景透明度；0% 为完全透明，100% 为不透明。");
             _toolTip.SetToolTip(_swatchTransparent, "透明背景：只输出图片本身和透明间隙。");
+            _toolTip.SetToolTip(_rowsStep, "网格行数：1–20 行，默认 3；图片按行优先顺序填入。");
+            _toolTip.SetToolTip(_columnsStep, "网格列数：1–20 列，默认 3。");
+            _toolTip.SetToolTip(_rowGapStep, "网格行间距：0–200 px，默认 12；0 时上下相邻格子无缝相接。");
+            _toolTip.SetToolTip(_columnGapStep, "网格列间距：0–200 px，默认 12；0 时左右相邻格子无缝相接。");
+            _toolTip.SetToolTip(_mergeCellsButton,
+                "打开合并编辑器：拖选相邻的矩形区域合并成大格。\n大格只放 1 张图，容量会相应减少；可拆分或清空所有合并。");
+            _toolTip.SetToolTip(_gridGuidesCheck, "在预览中叠加淡淡的单元格/合并区域边界线；仅预览，不写入输出图片。");
 
             _outputSection = NewSection("输出格式");
             _sidePanel.Controls.Add(_outputSection);
@@ -382,6 +455,34 @@ namespace LightCollage.App
             return swatch;
         }
 
+        /// <summary>网格设置区的参数小标题（行数/列数/行间距/列间距，放在步进器上方）。</summary>
+        private Label NewGridParamLabel(string text)
+        {
+            Label label = NewLabel(text, Theme.FontTiny, Theme.TextMuted);
+            label.AutoSize = false;
+            label.TextAlign = ContentAlignment.BottomLeft;
+            return label;
+        }
+
+        private void SetGridControlsVisible(bool visible)
+        {
+            if (_gridSection == null)
+            {
+                return;
+            }
+            _gridSection.Visible = visible;
+            _rowCountLabel.Visible = visible;
+            _columnCountLabel.Visible = visible;
+            _rowGapLabel.Visible = visible;
+            _columnGapLabel.Visible = visible;
+            _rowsStep.Visible = visible;
+            _columnsStep.Visible = visible;
+            _rowGapStep.Visible = visible;
+            _columnGapStep.Visible = visible;
+            _mergeCellsButton.Visible = visible;
+            _gridGuidesCheck.Visible = visible;
+        }
+
         private void LayoutUi()
         {
             if (_preview == null)
@@ -416,8 +517,25 @@ namespace LightCollage.App
             LayoutSidePanel();
         }
 
+        /// <summary>侧栏布局分派：横向/纵向沿用原有绝对定位布局；网格模式按网格区重新分段定位（并把外边距并入网格区）。</summary>
         private void LayoutSidePanel()
         {
+            if (_sidePanel == null || _sidePanel.ClientSize.Width <= 0)
+            {
+                return;
+            }
+            if (IsGridMode())
+            {
+                LayoutSidePanelGrid();
+                return;
+            }
+            LayoutSidePanelLinear();
+        }
+
+        /// <summary>横向 / 纵向模式侧栏布局（保持 v1.0.0 原有坐标与观感，不做改动）。</summary>
+        private void LayoutSidePanelLinear()
+        {
+            _formatNote.Visible = true;
             int pad = Theme.S(this, 16);
             int innerW = _sidePanel.ClientSize.Width - pad * 2;
             int y = Theme.S(this, 14);
@@ -493,6 +611,159 @@ namespace LightCollage.App
             _saveButton.Size = new Size(innerW, Theme.S(this, 38));
 
             _sideTitle.Font = Theme.FontTitle;
+        }
+
+        private bool IsGridMode()
+        {
+            return _appSettings != null && _appSettings.Collage.Orientation == CollageOrientation.Grid;
+        }
+
+        /// <summary>
+        /// 网格模式侧栏布局：现有「间距与边距」区替换为「网格」区（行数/列数/行间距/列间距/外边距/合并/辅助线），
+        /// 其它分区整体上移。绝对定位没有回流，所以每次切换模式/窗口尺寸变化都重新计算；
+        /// 内容与底部保存按钮冲突时自动改用紧凑密度（必要时隐藏格式说明行）。
+        /// </summary>
+        private void LayoutSidePanelGrid()
+        {
+            int pad = Theme.S(this, 16);
+            int innerW = _sidePanel.ClientSize.Width - pad * 2;
+            int y = Theme.S(this, 14);
+            _sideTitle.Location = new Point(pad, y);
+            _sideTitle.Size = new Size(innerW - Theme.S(this, 34), Theme.S(this, 30));
+            _helpButton.Location = new Point(_sidePanel.ClientSize.Width - pad - _helpButton.Width, y);
+            _sideSubtitle.Location = new Point(pad, y + Theme.S(this, 30));
+
+            int top = y + Theme.S(this, 52);
+            _orientationSection.Location = new Point(pad, top);
+            _orientationSection.Size = new Size(innerW, Theme.S(this, 20));
+            _orientationSeg.Location = new Point(pad, top + Theme.S(this, 22));
+            _orientationSeg.Size = new Size(innerW, Theme.S(this, 34));
+            top += Theme.S(this, 64);
+
+            int panelH = _sidePanel.ClientSize.Height;
+            int saveAsH = Theme.S(this, 32);
+            int saveAsTop = panelH - Theme.S(this, 16) - saveAsH;
+            int saveTop = saveAsTop - Theme.S(this, 44);
+            int availableBottom = saveTop - Theme.S(this, 6);
+
+            int contentBottom = LayoutGridContent(top, pad, innerW, false);
+            if (contentBottom > availableBottom)
+            {
+                LayoutGridContent(top, pad, innerW, true);
+            }
+
+            _saveAsButton.Location = new Point(pad, saveAsTop);
+            _saveAsButton.Size = new Size(innerW, saveAsH);
+            _saveButton.Location = new Point(pad, saveTop);
+            _saveButton.Size = new Size(innerW, Theme.S(this, 38));
+        }
+
+        /// <summary>排布网格模式下的各分区，返回内容底边；compact=true 时压缩行距/控件高度。</summary>
+        private int LayoutGridContent(int top, int pad, int innerW, bool compact)
+        {
+            int labelH = Theme.S(this, compact ? 13 : 14);
+            int stepH = Theme.S(this, compact ? 27 : 30);
+            int rowGap = Theme.S(this, compact ? 3 : 5);
+            int sectionGap = Theme.S(this, compact ? 3 : 8);
+            int segH = Theme.S(this, compact ? 27 : 30);
+            int rowH = Theme.S(this, compact ? 29 : 32);
+            int swatchH = Theme.S(this, compact ? 40 : 44);
+            int buttonH = Theme.S(this, compact ? 26 : 30);
+            int guidesH = Theme.S(this, compact ? 20 : 22);
+            int half = Math.Max(Theme.S(this, 60), (innerW - Theme.S(this, 8)) / 2);
+            int secondX = pad + innerW - half;
+
+            // ---- 网格区
+            _gridSection.Location = new Point(pad, top);
+            _gridSection.Size = new Size(innerW, Theme.S(this, 20));
+            int y = top + Theme.S(this, 22);
+
+            _rowCountLabel.Location = new Point(pad, y);
+            _rowCountLabel.Size = new Size(half, labelH);
+            _columnCountLabel.Location = new Point(secondX, y);
+            _columnCountLabel.Size = new Size(half, labelH);
+            y += labelH;
+            _rowsStep.Location = new Point(pad, y);
+            _rowsStep.Size = new Size(half, stepH);
+            _columnsStep.Location = new Point(secondX, y);
+            _columnsStep.Size = new Size(half, stepH);
+            y += stepH + rowGap;
+
+            _rowGapLabel.Location = new Point(pad, y);
+            _rowGapLabel.Size = new Size(half, labelH);
+            _columnGapLabel.Location = new Point(secondX, y);
+            _columnGapLabel.Size = new Size(half, labelH);
+            y += labelH;
+            _rowGapStep.Location = new Point(pad, y);
+            _rowGapStep.Size = new Size(half, stepH);
+            _columnGapStep.Location = new Point(secondX, y);
+            _columnGapStep.Size = new Size(half, stepH);
+            y += stepH + rowGap;
+
+            _marginLabel.Location = new Point(pad, y + Theme.S(this, 3));
+            _marginLabel.Size = new Size(Theme.S(this, 110), Theme.S(this, 24));
+            _marginStep.Location = new Point(pad + innerW - Theme.S(this, 124), y);
+            _marginStep.Size = new Size(Theme.S(this, 124), stepH);
+            y += stepH + rowGap;
+
+            _mergeCellsButton.Location = new Point(pad, y);
+            _mergeCellsButton.Size = new Size(innerW, buttonH);
+            y += buttonH + rowGap;
+
+            _gridGuidesCheck.Location = new Point(pad, y);
+            _gridGuidesCheck.Size = new Size(innerW, guidesH);
+            y += guidesH + sectionGap;
+
+            // ---- 背景（压缩为：色块行 + 透明度标题/滑块两行）
+            _backgroundSection.Location = new Point(pad, y);
+            _backgroundSection.Size = new Size(innerW, Theme.S(this, 20));
+            int swY = y + Theme.S(this, 22);
+            int swW = Theme.S(this, 58);
+            int swGap = Theme.S(this, 7);
+            _swatchTransparent.Location = new Point(pad, swY);
+            _swatchWhite.Location = new Point(pad + swW + swGap, swY);
+            _swatchBlack.Location = new Point(pad + (swW + swGap) * 2, swY);
+            _swatchCustom.Location = new Point(pad + (swW + swGap) * 3, swY);
+            _swatchTransparent.Size = new Size(swW, swatchH);
+            _swatchWhite.Size = new Size(swW, swatchH);
+            _swatchBlack.Size = new Size(swW, swatchH);
+            _swatchCustom.Size = new Size(swW, swatchH);
+            int alphaY = swY + swatchH + Theme.S(this, 2);
+            _alphaTitle.Location = new Point(pad, alphaY + Theme.S(this, 2));
+            _alphaTitle.Size = new Size(Theme.S(this, 100), Theme.S(this, 16));
+            _alphaValue.Location = new Point(pad + innerW - Theme.S(this, 80), alphaY + Theme.S(this, 2));
+            _alphaValue.Size = new Size(Theme.S(this, 80), Theme.S(this, 16));
+            _alphaSlider.Location = new Point(pad, alphaY + Theme.S(this, 19));
+            _alphaSlider.Size = new Size(innerW, Theme.S(this, compact ? 20 : 22));
+            y = _alphaSlider.Bottom + sectionGap;
+
+            // ---- 输出尺寸
+            _sizeSection.Location = new Point(pad, y);
+            _sizeSection.Size = new Size(innerW, Theme.S(this, 20));
+            _sizeModeSeg.Location = new Point(pad, y + Theme.S(this, 22));
+            _sizeModeSeg.Size = new Size(innerW, segH);
+            int sizeRow = y + Theme.S(this, 22) + segH + Theme.S(this, 4);
+            bool fixedSize = _sizeModeSeg.SelectedIndex != 0;
+            _sizeHint.Location = new Point(pad, sizeRow);
+            _sizeHint.Size = new Size(fixedSize ? innerW - Theme.S(this, 132) : innerW, rowH);
+            _sizeStep.Location = new Point(pad + innerW - Theme.S(this, 124), sizeRow);
+            _sizeStep.Size = new Size(Theme.S(this, 124), rowH);
+            y = sizeRow + rowH + sectionGap;
+
+            // ---- 输出格式
+            _outputSection.Location = new Point(pad, y);
+            _outputSection.Size = new Size(innerW, Theme.S(this, 20));
+            _formatSeg.Location = new Point(pad, y + Theme.S(this, 22));
+            _formatSeg.Size = new Size(innerW, segH);
+            y = y + Theme.S(this, 22) + segH + Theme.S(this, 2);
+            _formatNote.Location = new Point(pad, y);
+            _formatNote.Size = new Size(innerW, Theme.S(this, 18));
+            _formatNote.Visible = !compact;
+            if (!compact)
+            {
+                y += Theme.S(this, 18);
+            }
+            return y;
         }
 
         private void MainFormShown(object sender, EventArgs e)
@@ -575,9 +846,20 @@ namespace LightCollage.App
             try
             {
                 CollageSettings s = _appSettings.Collage;
-                _orientationSeg.SelectedIndex = s.Orientation == CollageOrientation.Horizontal ? 0 : 1;
+                s.GridRows = GridLayout.ClampRows(s.GridRows);
+                s.GridColumns = GridLayout.ClampColumns(s.GridColumns);
+                s.RowGap = GridLayout.ClampGap(s.RowGap);
+                s.ColumnGap = GridLayout.ClampGap(s.ColumnGap);
+                s.Merges = GridLayout.NormalizeMerges(s.GridRows, s.GridColumns, s.Merges);
+                _orientationSeg.SelectedIndex = s.Orientation == CollageOrientation.Grid ? 2
+                    : (s.Orientation == CollageOrientation.Vertical ? 1 : 0);
                 _gapStep.Value = s.Gap;
                 _marginStep.Value = s.Margin;
+                _rowsStep.SetValueSilently(s.GridRows);
+                _columnsStep.SetValueSilently(s.GridColumns);
+                _rowGapStep.SetValueSilently(s.RowGap);
+                _columnGapStep.SetValueSilently(s.ColumnGap);
+                _gridGuidesCheck.SetCheckedSilently(s.ShowGridGuides);
                 _alphaSlider.SetValueSilently(Color.FromArgb(s.BackgroundArgb).A);
                 _alphaSlider.BaseColor = Color.FromArgb(Color.FromArgb(s.BackgroundArgb).R,
                     Color.FromArgb(s.BackgroundArgb).G, Color.FromArgb(s.BackgroundArgb).B);
@@ -591,6 +873,7 @@ namespace LightCollage.App
                 RefreshOrientationUi();
                 RefreshSizeUi();
                 RefreshFormatUi();
+                UpdateMinimumSizeForOrientation();
             }
             finally
             {
@@ -600,12 +883,119 @@ namespace LightCollage.App
 
         private void RefreshOrientationUi()
         {
+            bool grid = IsGridMode();
             if (_gapLabel != null)
             {
                 _gapLabel.Text = "图片间距 (px)";
                 _marginLabel.Text = "外边距 (px)";
             }
+            if (_gridSection != null)
+            {
+                // 网格模式：显示「网格」区（外边距并入本区），隐藏「图片间距」；横/纵模式恢复原样。
+                _spacingSection.Visible = !grid;
+                _gapLabel.Visible = !grid;
+                _gapStep.Visible = !grid;
+                SetGridControlsVisible(grid);
+                _marginLabel.Visible = true;
+                _marginStep.Visible = true;
+                if (_hintLabel != null)
+                {
+                    _hintLabel.Visible = !grid;
+                }
+                LayoutSidePanel();
+            }
             RefreshSizeUi();
+        }
+
+        /// <summary>网格模式下整行提示文案（行列数/容量/合并/未放入）；横/纵模式保持 v1.0.0 文案。</summary>
+        private string BuildCountText()
+        {
+            CollageSettings s = _appSettings.Collage;
+            if (s.Orientation != CollageOrientation.Grid)
+            {
+                string orientation = s.Orientation == CollageOrientation.Horizontal ? "横向" : "纵向";
+                return "共 " + _items.Count + " 张图片 · " + orientation + "拼接";
+            }
+            int rows = GridLayout.ClampRows(s.GridRows);
+            int columns = GridLayout.ClampColumns(s.GridColumns);
+            List<GridRegion> merges = GridLayout.NormalizeMerges(rows, columns, s.Merges);
+            int capacity = GridLayout.Capacity(rows, columns, merges);
+            int unplaced = Math.Max(0, _items.Count - capacity);
+            string text = "共 " + _items.Count + " 张图片 · 网格拼接 " + rows + "×" + columns
+                + " · 容量 " + capacity + " · 合并 " + merges.Count + " 处";
+            if (unplaced > 0)
+            {
+                text += " · 未放入 " + unplaced + " 张";
+            }
+            return text;
+        }
+
+        /// <summary>当前网格容量（非网格返回 int.MaxValue 表示全部放入）。</summary>
+        private int CurrentGridCapacity()
+        {
+            CollageSettings s = _appSettings.Collage;
+            if (s.Orientation != CollageOrientation.Grid)
+            {
+                return int.MaxValue;
+            }
+            int rows = GridLayout.ClampRows(s.GridRows);
+            int columns = GridLayout.ClampColumns(s.GridColumns);
+            List<GridRegion> merges = GridLayout.NormalizeMerges(rows, columns, s.Merges);
+            return GridLayout.Capacity(rows, columns, merges);
+        }
+
+        /// <summary>按当前模式调整窗口最小高度（网格设置区更高；小屏时以工作区高度为上限）。</summary>
+        private void UpdateMinimumSizeForOrientation()
+        {
+            bool grid = IsGridMode();
+            int minWidth = Theme.S(this, 1020);
+            int minHeight = Theme.S(this, grid ? 760 : 724);
+            int effectiveMinHeight = minHeight;
+            if (grid)
+            {
+                // 屏幕工作区装不下 760 逻辑高度时，允许更小（侧栏会切紧凑密度），避免窗口超出屏幕。
+                int workHeight;
+                try
+                {
+                    workHeight = Screen.FromControl(this).WorkingArea.Height;
+                }
+                catch
+                {
+                    workHeight = Screen.PrimaryScreen.WorkingArea.Height;
+                }
+                if (workHeight > 0 && workHeight < minHeight)
+                {
+                    effectiveMinHeight = Math.Max(Theme.S(this, 620), workHeight);
+                }
+            }
+            MinimumSize = new Size(minWidth, effectiveMinHeight);
+            if (grid && Height < effectiveMinHeight)
+            {
+                Height = effectiveMinHeight;
+            }
+        }
+
+        /// <summary>规范化网格行列与合并区域；返回合并集合是否被修正。notify 时在状态栏提示被移除的越界合并。</summary>
+        private bool NormalizeGridSettings(bool notify)
+        {
+            CollageSettings s = _appSettings.Collage;
+            int rows = GridLayout.ClampRows(s.GridRows);
+            int columns = GridLayout.ClampColumns(s.GridColumns);
+            int beforeCount = s.Merges == null ? 0 : s.Merges.Count;
+            string beforeText = GridLayout.SerializeMerges(s.Merges);
+            List<GridRegion> normalized = GridLayout.NormalizeMerges(rows, columns, s.Merges);
+            s.GridRows = rows;
+            s.GridColumns = columns;
+            s.RowGap = GridLayout.ClampGap(s.RowGap);
+            s.ColumnGap = GridLayout.ClampGap(s.ColumnGap);
+            s.Merges = normalized;
+            bool changed = beforeCount != normalized.Count
+                || !string.Equals(beforeText, GridLayout.SerializeMerges(normalized), StringComparison.Ordinal);
+            if (changed && notify && beforeCount > normalized.Count)
+            {
+                SetStatus("行列变化：已自动移除 " + (beforeCount - normalized.Count) + " 处越界/非法的合并区域", true);
+            }
+            return changed;
         }
 
         private void RefreshSizeUi()
@@ -633,7 +1023,7 @@ namespace LightCollage.App
             }
             else
             {
-                _sizeHint.Text = "自动：取图片中间尺寸";
+                _sizeHint.Text = IsGridMode() ? "自动：单元格取图片尺寸中位数" : "自动：取图片中间尺寸";
             }
         }
 
@@ -1049,7 +1439,15 @@ namespace LightCollage.App
                 if (composition != null)
                 {
                     CollageLayout layout = composition.Layout;
-                    string dir = snapshot.Orientation == CollageOrientation.Horizontal ? "横向拼接" : "纵向拼接";
+                    string dir;
+                    if (snapshot.Orientation == CollageOrientation.Grid)
+                    {
+                        dir = "网格拼接";
+                    }
+                    else
+                    {
+                        dir = snapshot.Orientation == CollageOrientation.Horizontal ? "横向拼接" : "纵向拼接";
+                    }
                     string info = dir + " · " + _items.Count + " 张";
                     string size = string.Format(CultureInfo.CurrentCulture, "输出 {0:N0} × {1:N0} px",
                         layout.CanvasWidth, layout.CanvasHeight);
@@ -1058,6 +1456,7 @@ namespace LightCollage.App
                         size += " · 已自动缩小";
                     }
                     _preview.SetPreview(composition.Bitmap, info, size);
+                    _preview.SetHitInfo(BuildPreviewHitInfo(composition, snapshot));
                     if (snapshot.OutputSizeMode == OutputSizeMode.Width)
                     {
                         _sizeHint.Text = "高度自动 " + layout.CanvasHeight.ToString("N0", CultureInfo.CurrentCulture) + " px";
@@ -1068,13 +1467,16 @@ namespace LightCollage.App
                     }
                     else
                     {
-                        _sizeHint.Text = "自动：取图片中间尺寸";
+                        _sizeHint.Text = snapshot.Orientation == CollageOrientation.Grid
+                            ? "自动：单元格取图片尺寸中位数"
+                            : "自动：取图片中间尺寸";
                     }
                     UpdateChrome();
                 }
                 else
                 {
                     _preview.SetPreview(null, string.Empty, string.Empty);
+                    _preview.SetHitInfo(null);
                 }
                 if (old != null)
                 {
@@ -1084,8 +1486,89 @@ namespace LightCollage.App
             catch (Exception ex)
             {
                 _preview.SetPreview(null, string.Empty, string.Empty);
+                _preview.SetHitInfo(null);
                 SetStatus("预览生成失败：" + ex.Message, true);
             }
+        }
+
+        /// <summary>
+        /// 把合成结果中的布局命中信息拷贝成值副本喂给预览面板（面板不持有会被 Dispose 的 PreviewComposition）。
+        /// 包括：合成缩放比、输出坐标 item 矩形 + Index、网格元数据、合并区域、辅助线开关。
+        /// </summary>
+        private PreviewHitInfo BuildPreviewHitInfo(PreviewComposition composition, CollageSettings snapshot)
+        {
+            if (composition == null || composition.Layout == null)
+            {
+                return null;
+            }
+            CollageLayout layout = composition.Layout;
+            PreviewHitInfo info = PreviewHitInfo.CreateEmpty();
+            info.Scale = composition.Scale <= 0f ? 1f : composition.Scale;
+            int count = layout.Items == null ? 0 : layout.Items.Length;
+            LayoutItem[] items = new LayoutItem[count];
+            for (int i = 0; i < count; i++)
+            {
+                LayoutItem source = layout.Items[i];
+                if (source == null)
+                {
+                    continue;
+                }
+                LayoutItem copy = new LayoutItem();
+                copy.Index = source.Index;
+                copy.X = source.X;
+                copy.Y = source.Y;
+                copy.Width = source.Width;
+                copy.Height = source.Height;
+                items[i] = copy;
+            }
+            info.Items = items;
+            info.IsGrid = layout.IsGrid;
+            if (layout.IsGrid)
+            {
+                int rows = GridLayout.ClampRows(layout.GridRows);
+                int columns = GridLayout.ClampColumns(layout.GridColumns);
+                info.GridRows = rows;
+                info.GridColumns = columns;
+                info.CellWidth = Math.Max(1, layout.CellWidth);
+                info.CellHeight = Math.Max(1, layout.CellHeight);
+                info.RowGap = Math.Max(0, layout.RowGap);
+                info.ColumnGap = Math.Max(0, layout.ColumnGap);
+                info.GridMargin = Math.Max(0, layout.GridMargin);
+                List<GridRegion> merges = GridLayout.NormalizeMerges(rows, columns, snapshot.Merges);
+                GridRegion[] copies = new GridRegion[merges.Count];
+                for (int i = 0; i < merges.Count; i++)
+                {
+                    copies[i] = merges[i].Clone();
+                }
+                info.Merges = copies;
+                info.ShowGuides = snapshot.ShowGridGuides;
+            }
+            return info;
+        }
+
+        /// <summary>预览拖动对调：交换图片列表顺序 → 缩略图/序号刷新 → 选中跟随 → 状态栏提示。</summary>
+        private void SwapItems(int from, int to)
+        {
+            if (from < 0 || to < 0 || from >= _items.Count || to >= _items.Count || from == to)
+            {
+                SetStatus("已取消拖动：目标无效", false);
+                return;
+            }
+            if (_saving)
+            {
+                return;
+            }
+            EditorItem item = _items[from];
+            _items[from] = _items[to];
+            _items[to] = item;
+            _dirty = true;
+            _selectedIndex = to;
+            _strip.SetItems(_items);
+            _strip.SelectedIndex = to;
+            _strip.EnsureVisible(to);
+            UpdateChrome();
+            MarkChanged();
+            SetStatus("已交换 第" + (from + 1) + "张 ↔ 第" + (to + 1) + "张", false);
         }
 
         private void DisposeComposition()
@@ -1103,8 +1586,12 @@ namespace LightCollage.App
             {
                 return;
             }
-            string orientation = _appSettings.Collage.Orientation == CollageOrientation.Horizontal ? "横向" : "纵向";
-            _countLabel.Text = "共 " + _items.Count + " 张图片 · " + orientation + "拼接";
+            _countLabel.Text = BuildCountText();
+            if (_strip != null)
+            {
+                int capacity = CurrentGridCapacity();
+                _strip.PlacedCount = capacity == int.MaxValue ? int.MaxValue : Math.Min(_items.Count, capacity);
+            }
             _saveButton.Enabled = !_saving && _items.Count > 0 && AllReady();
             _saveAsButton.Enabled = !_saving && _items.Count > 0 && AllReady();
             _clearButton.Enabled = _items.Count > 0 && !_saving;
@@ -1141,10 +1628,127 @@ namespace LightCollage.App
             {
                 return;
             }
-            _appSettings.Collage.Orientation = _orientationSeg.SelectedIndex == 0
-                ? CollageOrientation.Horizontal : CollageOrientation.Vertical;
+            int index = _orientationSeg.SelectedIndex;
+            CollageOrientation orientation = index == 2 ? CollageOrientation.Grid
+                : (index == 1 ? CollageOrientation.Vertical : CollageOrientation.Horizontal);
+            bool switchedToGrid = orientation == CollageOrientation.Grid
+                && _appSettings.Collage.Orientation != CollageOrientation.Grid;
+            _appSettings.Collage.Orientation = orientation;
+            if (orientation == CollageOrientation.Grid)
+            {
+                NormalizeGridSettings(false);
+            }
+            UpdateMinimumSizeForOrientation();
             RefreshOrientationUi();
+            UpdateChrome();
             MarkChanged();
+            if (switchedToGrid)
+            {
+                SetStatus("网格拼接：拖动预览里的图片可对调位置", false);
+            }
+            else
+            {
+                SetStatus(orientation == CollageOrientation.Horizontal ? "已切换到横向拼接" : "已切换到纵向拼接", false);
+            }
+        }
+
+        private void GridRowsChanged(object sender, EventArgs e)
+        {
+            if (_updatingUi)
+            {
+                return;
+            }
+            CollageSettings s = _appSettings.Collage;
+            int beforeCount = s.Merges == null ? 0 : s.Merges.Count;
+            s.GridRows = GridLayout.ClampRows(_rowsStep.Value);
+            NormalizeGridSettings(false);
+            int removed = beforeCount - s.Merges.Count;
+            string text = "网格行数：" + s.GridRows + " 行 · 容量 " + CurrentGridCapacity() + " 格";
+            if (removed > 0)
+            {
+                SetStatus("行数变化：已自动移除 " + removed + " 处越界合并；" + text, true);
+            }
+            else
+            {
+                SetStatus(text, false);
+            }
+            UpdateChrome();
+            MarkChanged();
+        }
+
+        private void GridColumnsChanged(object sender, EventArgs e)
+        {
+            if (_updatingUi)
+            {
+                return;
+            }
+            CollageSettings s = _appSettings.Collage;
+            int beforeCount = s.Merges == null ? 0 : s.Merges.Count;
+            s.GridColumns = GridLayout.ClampColumns(_columnsStep.Value);
+            NormalizeGridSettings(false);
+            int removed = beforeCount - s.Merges.Count;
+            string text = "网格列数：" + s.GridColumns + " 列 · 容量 " + CurrentGridCapacity() + " 格";
+            if (removed > 0)
+            {
+                SetStatus("列数变化：已自动移除 " + removed + " 处越界合并；" + text, true);
+            }
+            else
+            {
+                SetStatus(text, false);
+            }
+            UpdateChrome();
+            MarkChanged();
+        }
+
+        private void RowGapChanged(object sender, EventArgs e)
+        {
+            if (_updatingUi)
+            {
+                return;
+            }
+            _appSettings.Collage.RowGap = GridLayout.ClampGap(_rowGapStep.Value);
+            MarkChanged();
+        }
+
+        private void ColumnGapChanged(object sender, EventArgs e)
+        {
+            if (_updatingUi)
+            {
+                return;
+            }
+            _appSettings.Collage.ColumnGap = GridLayout.ClampGap(_columnGapStep.Value);
+            MarkChanged();
+        }
+
+        private void GridGuidesChanged(object sender, EventArgs e)
+        {
+            if (_updatingUi)
+            {
+                return;
+            }
+            _appSettings.Collage.ShowGridGuides = _gridGuidesCheck.Checked;
+            MarkChanged();
+            SetStatus(_gridGuidesCheck.Checked ? "已显示网格辅助线（仅预览，不写入输出）" : "已隐藏网格辅助线", false);
+        }
+
+        private void OpenGridMergeDialog()
+        {
+            CollageSettings s = _appSettings.Collage;
+            NormalizeGridSettings(false);
+            int rows = GridLayout.ClampRows(s.GridRows);
+            int columns = GridLayout.ClampColumns(s.GridColumns);
+            using (GridMergeDialog dialog = new GridMergeDialog(rows, columns, s.Merges, _items.Count))
+            {
+                if (dialog.ShowDialog(this) == DialogResult.OK)
+                {
+                    s.Merges = dialog.Merges;
+                    NormalizeGridSettings(false);
+                    UpdateChrome();
+                    MarkChanged();
+                    SetStatus("已更新合并单元格：合并 " + s.Merges.Count + " 处 · 容量 "
+                        + GridLayout.Capacity(rows, columns, s.Merges) + " 格", false);
+                }
+            }
         }
 
         private void GapChanged(object sender, EventArgs e)
@@ -1670,6 +2274,13 @@ namespace LightCollage.App
 
         protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
         {
+            if (keyData == Keys.Escape)
+            {
+                if (_preview != null && _preview.CancelDrag())
+                {
+                    return true;
+                }
+            }
             if (keyData == (Keys.Control | Keys.O))
             {
                 ShowAddDialog();

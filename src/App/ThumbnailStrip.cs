@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
@@ -18,6 +18,7 @@ namespace LightCollage.App
         private bool _dragging;
         private Point _dragStart;
         private int _scrollX;
+        private int _placedCount = int.MaxValue;
 
         public event EventHandler AddRequested;
         public event Action<int> RemoveRequested;
@@ -31,6 +32,8 @@ namespace LightCollage.App
             BackColor = Theme.WindowBg;
             Height = 118;
             AllowDrop = false;
+            AccessibleName = "缩略图条";
+            Text = "缩略图条";
         }
 
         public int SelectedIndex
@@ -55,9 +58,34 @@ namespace LightCollage.App
             }
         }
 
+        /// <summary>
+        /// 已放入布局的图片数量（v1.1 网格模式容量不足时使用）：
+        /// 下标 &gt;= 该值的图片标记为「未放入」，仅影响显示，不改变顺序与交互。int.MaxValue 表示全部放入。
+        /// </summary>
+        public int PlacedCount
+        {
+            get { return _placedCount; }
+            set
+            {
+                int next = value < 0 ? int.MaxValue : value;
+                if (next != _placedCount)
+                {
+                    _placedCount = next;
+                    Invalidate();
+                }
+            }
+        }
+
         public void SetItems(IList<EditorItem> items)
         {
+            SetItems(items, _placedCount);
+        }
+
+        /// <summary>设置图片列表并同时指定“已放入”数量（旧调用 SetItems(items) 保持全部放入的兼容行为）。</summary>
+        public void SetItems(IList<EditorItem> items, int placedCount)
+        {
             _items = items ?? new List<EditorItem>();
+            _placedCount = placedCount < 0 ? int.MaxValue : placedCount;
             if (_items.Count == 0)
             {
                 _selectedIndex = -1;
@@ -418,6 +446,21 @@ namespace LightCollage.App
                     }
                 }
                 g.ResetClip();
+            }
+
+            bool placed = index < _placedCount;
+            if (!placed)
+            {
+                // 容量不足：超出网格容量的图片压暗并标记「未放入」（仍保留在列表、可删除/排序，保存时不参与合成）。
+                using (SolidBrush dim = new SolidBrush(Color.FromArgb(150, 8, 10, 14)))
+                {
+                    g.FillRectangle(dim, imageRect);
+                }
+                Rectangle tag = new Rectangle(imageRect.Left, imageRect.Bottom - Theme.S(this, 17),
+                    imageRect.Width, Theme.S(this, 17));
+                Theme.FillRounded(g, tag, 5f, Color.FromArgb(222, 8, 10, 14));
+                Theme.DrawText(g, "未放入", Theme.FontTiny, tag, Theme.TextMuted,
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine);
             }
 
             int badge = Theme.S(this, 18);

@@ -1,6 +1,7 @@
 # 轻拼 LightCollage · 接口契约（供并行开发）
 
 > 本文件由 Lead 维护。各成员只修改自己负责的目录；不要改 `src/Common/Models.cs` 的公开签名。需要改契约先告诉 Lead。
+> **v1.1（2026-11-05）**：网格拼接契约见 [第 10 节](#10-v11-网格拼接契约2026-11-05lead-已扩展模型开发按此实现)；Lead 已扩展 `Models.cs` 并新增 `src/Core/GridLayout.cs`。
 
 ## 0. 环境与技术约束
 
@@ -319,3 +320,149 @@ new SingleInstance()
 - 每完成一个阶段性模块，运行自己的编译检查（可建临时目录放 stub，不要把 stub 提交到 src）。
 - 给 Lead 的消息要包含：完成文件、编译命令/结果、测试结果、未解决风险。
 - 代码注释用中文，标识符英文；异常信息面向用户用中文。
+
+## 10. v1.1 网格拼接契约（2026-11-05，Lead 已扩展模型，开发按此实现）
+
+> 需求依据：`docs/需求确认-网格布局拼图-v1.1.md`（已确认）。本节为 v1.1 的权威接口契约。
+> 版本：`AppInfo.Version = "1.1.0"`；`src/AssemblyInfo.cs` 同步 `1.1.0.0`。
+
+### 10.1 共享模型（`src/Common/Models.cs`，Lead 已改，其他人不要改）
+
+```csharp
+public enum CollageOrientation { Horizontal = 0, Vertical = 1, Grid = 2 }
+
+public sealed class GridRegion   // 0 基、闭区间；至少 2 格
+{
+    public int Row { get; set; }
+    public int Col { get; set; }
+    public int RowSpan { get; set; }   // >= 1
+    public int ColSpan { get; set; }   // >= 1
+    public int EndRow { get; }         // Row + RowSpan - 1
+    public int EndCol { get; }
+    public int Area { get; }
+    public GridRegion Clone();
+}
+
+// CollageSettings 新增（全部纳入 Clone()，Merges 深拷贝）：
+public int GridRows { get; set; }        // 默认 3，1..20
+public int GridColumns { get; set; }     // 默认 3，1..20
+public int RowGap { get; set; }          // 默认 12，0..200
+public int ColumnGap { get; set; }       // 默认 12，0..200
+public List<GridRegion> Merges { get; set; }  // 默认空；网格数据源
+public bool ShowGridGuides { get; set; }      // 默认 true；仅影响预览
+
+// CollageLayout 新增（网格元数据，非网格保持默认 0/false）：
+public bool IsGrid;
+public int GridRows, GridColumns;
+public int CellWidth, CellHeight;   // 缩放后的单元格尺寸（输出像素）
+public int RowGap, ColumnGap;       // 缩放后的行/列间距
+public int GridMargin;              // 缩放后的外边距
+public int Capacity;                // 网格容量（区域数）；非网格 0
+// LayoutItem 语义：Index = 对应“图片列表下标”（网格=落位顺序）；矩形 = 区域矩形（未做 contain 适配）
+```
+
+### 10.2 `public static class GridLayout`（`src/Core/GridLayout.cs`，Lead 已实现，core-dev 使用，不要改语义）
+
+```csharp
+public const int MinRowsOrColumns = 1, MaxRowsOrColumns = 20, MaxMerges = 200, MaxGapOrMargin = 200;
+public static int ClampRows(int rows);        // 1..20
+public static int ClampColumns(int cols);
+public static int ClampGap(int gap);          // 0..200
+public static List<GridRegion> NormalizeMerges(int rows,int cols,IList<GridRegion> merges); // 去非法/重叠，按行优先排序
+public static List<GridRegion> BuildRegions(int rows,int cols,IList<GridRegion> normalizedMerges); // 行优先填图顺序
+public static int Capacity(int rows,int cols,IList<GridRegion> normalizedMerges);
+public static int FindRegionIndex(int rows,int cols,IList<GridRegion> normalizedMerges,int row,int col);
+public static bool TryMerge(int rows,int cols,IList<GridRegion> merges,int row,int col,int rowSpan,int colSpan,out List<GridRegion> merged);
+public static List<GridRegion> RemoveMergesInside(int rows,int cols,IList<GridRegion> merges,int row,int col,int rowSpan,int colSpan);
+public static List<GridRegion> RemoveMergeAt(int rows,int cols,IList<GridRegion> merges,int row,int col);
+public static string SerializeMerges(IList<GridRegion> merges);              // "1,1,2,2;3,3,3,4"
+public static List<GridRegion> ParseMerges(string text,int rows,int cols);   // 1 基闭区间；容错
+```
+
+### 10.3 `LayoutEngine.Compute` 网格规则（core-dev 实现）
+
+- `settings.Orientation == Grid` 时进入网格分支，**横向/纵向行为必须与 v1.0.0 完全一致（零回归）**。
+- `rows = GridLayout.ClampRows(settings.GridRows)`，`cols = GridLayout.ClampColumns(settings.GridColumns)`；
+  `merges = GridLayout.NormalizeMerges(rows, cols, settings.Merges)`；`regions = GridLayout.BuildRegions(...)`；
+  `capacity = regions.Count`；实际放入 `placed = min(sizes.Count, capacity)`（**只产出 placed 个 LayoutItem**）。
+- 自动单元格基准（新增公开方法）：`GetAutoGridCellSize(IList<ImageSize> sizes)` 返回 `ImageSize(cellW, cellH)`；
+  cellW = 所有图片宽度的中位数、cellH = 所有图片高度的中位数（偶数取中间两个平均、四舍五入、至少 1）。
+  网格模式**不使用** `AutoBaseSize/BaseSize`（`--base` 仅对横/纵生效）。
+- 几何（整数像素，与需求文档 5.3 一致）：
+  `x(c)=margin+c*(cellW+colGap)`，`y(r)=margin+r*(cellH+rowGap)`；
+  区域 `(r0,c0)-(r1,c1)`：`X=x(c0)`，`Y=y(r0)`，`W=(c1-c0+1)*cellW+(c1-c0)*colGap`，`H` 同理；
+  画布 `CW=2*margin+cols*cellW+(cols-1)*colGap`，`CH` 同理。
+- 每个已放入图片 i 的 `LayoutItem`：`Index=i`，矩形=第 i 个区域矩形（大格含其内部跨越的行/列间距）。
+- 填 `CollageLayout`：`IsGrid=true`、`GridRows/GridColumns/CellWidth/CellHeight/RowGap/ColumnGap/GridMargin/Capacity`；
+  `BaseSize = cellW`；`WasClamped` 按保护逻辑。
+- 输出尺寸：`Auto` = 上述自然尺寸；`Width/Height` = 先算自然布局，再整体等比缩放（间距/边距/单元格同步缩放），
+  主尺寸精确等于目标；复用 `ScaleLayout` 并**扩展为同时缩放网格元数据**（CellWidth/CellHeight/RowGap/ColumnGap/GridMargin，边界取整）。
+- 尺寸保护（默认 8000 万像素 / 单边 32000px）：超限时循环缩小 cellW/cellH（间距/边距不缩），直到满足或到 1；
+  置 `WasClamped=true`；不抛异常。
+- `sizes` 为空 → 现有 `CreateEmptyLayout()`；网格设置非法值一律 clamp，不抛异常（用 `long` 防溢出）。
+
+### 10.4 `Compositor` 网格绘制（core-dev 实现，签名不变）
+
+- `ComposePreview`：`layout = Compute(usableSizes, settings)` 后按 `layout.Items.Length` 循环：
+  `source = usable[item.Index]`（越界防御跳过）；目标矩形 = 网格分支“等比 contain 适配 + 居中”的 item 矩形（再乘预览 scale）；
+  非网格分支保持现有行为（含 `usable[i] ↔ layout.Items[i]` 原语义），保证 v1.0 像素零回归。
+- `Save/Compose`：网格分支允许 `paths.Count >= layout.Count`（容量溢出时未放入图片不参与保存）：
+  按 `layout.Items` 遍历、用 `item.Index` 取 `paths/sizes`；`LoadFull` 后绘制到“区域矩形内 contain 适配居中”的整数矩形
+  （≥1px、不越画布）。非网格分支保持现有校验收/绘制循环不变。
+- 透明/背景/JPG 白底规则不变；网格空位＝背景色/透明。
+- 预览与保存的网格视觉效果必须一致（同一 contain 公式）。
+
+### 10.5 `SettingsStore`（core-dev 实现）
+
+`[collage]` 新增键（全部可选、缺失用默认、越界 clamp、写入时保存）：
+`GridRows`(1..20, 默认3)、`GridColumns`(1..20, 默认3)、`RowGap`(0..200, 默认12)、`ColumnGap`(0..200, 默认12)、
+`GridMerges`（`GridLayout.SerializeMerges` 格式，默认空）、`ShowGridGuides`（1/0，默认1）。
+`Orientation` 解析支持 `Grid`（同时兼容 `G`、`2`）。`GridMerges` 读取时先 clamp 行列再 `GridLayout.ParseMerges`。
+旧配置缺键 → 默认值；`Settings/OldConfigDefaults` 等既有测试必须继续通过。
+
+### 10.6 CLI（Lead 实现，`src/Program.cs`）
+
+`--compose` 新增：`--layout g|grid`、`--rows N`(1..20)、`--cols N`(1..20)、`--row-gap N`(0..200)、`--col-gap N`(0..200)、
+`--merge "1,1,2,2;3,3,3,4"`（1 基闭区间）。
+网格时 `--row-gap/--col-gap` 缺省则回落到 `--gap`（再缺省 12）；`--gap/--base` 仍用于横/纵。
+成功输出协议不变：`OK <W>x<H> -> <path>`；非法参数退出码 2、运行失败退出码 1 的既有约定不变。
+
+### 10.7 UI 契约（ui-dev 实现，`src/App/`）
+
+- 拼接方式 `SegmentedControl` 3 项：`横向排列 / 纵向排列 / 网格`；网格模式显示「网格」设置区
+  （行数、列数、行间距、列间距、外边距、合并单元格…、显示网格辅助线），隐藏「图片间距」；
+  `LayoutSidePanel` 的分段 `top` 必须按模式条件计算并在切换模式时重排（现有绝对定位无回流）。
+- 新增 `src/App/GridMergeDialog.cs`：模态弹窗（深色主题），R×C 矩阵拖选矩形、合并所选/拆分所选/清空所有合并、
+  容量与合并数提示、取消/确定；逻辑全部调用 `GridLayout.*`；确定后由 MainForm 写回 `settings.Merges`。
+- 预览拖动对调：`PreviewPanel` 需要被喂入“合成缩放比 + 输出坐标的 item 矩形 + Index + 网格元数据 + 合并区域 + 辅助线开关”的**副本**
+  （不能持有会被 Dispose 的 `PreviewComposition`），命中测试换算 client→输出坐标，`MouseDown/Move/Up` 实现拖动；
+  事件 `Action<int,int> SwapRequested`（from imageIndex, to imageIndex）。MainForm 收到后对调 `_items`、`_strip.SetItems`、
+  选中跟随、`MarkChanged()`，状态栏提示。无效目标/空白/Esc 取消。
+- `ThumbnailStrip`：需要区分“未放入”图片（index ≥ placedCount）样式/角标（提供 `PlacedCount` 属性或 `SetItems` 重载，保持旧调用兼容）。
+- 底部计数行：网格模式显示 `共 N 张图片 · 网格拼接 R×C · 容量 K · 合并 M 处`，容量不足追加 `· 未放入 X 张`。
+- 预览信息胶囊：网格 `网格拼接 · N 张`；输出尺寸文案沿用；`WasClamped` 追加「已自动缩小」。
+- 所有新增控件（行数/列数/行间距/列间距/合并单元格/显示网格辅助线/编辑器按钮）必须设置 `AccessibleName` + `Text`（UIA 测试用）。
+- 保存路径不变：MainForm 仍把全部 `paths/sizes` + `layout` 交给 `Compositor.Save`（网格分支按 Index 取图）。
+
+### 10.8 测试契约（core-dev + qa）
+
+- `tests/core/CoreTests.cs` 新增 `Layout/Grid*`：几何（含合并区域跨间距）、容量、行优先顺序、末尾空格、gap=0 无缝、
+  指定宽/高缩放、尺寸保护、自动基准中位数、单图、1×1、20×20、非法合并 clamp。
+- 设置：网格键 round-trip、旧配置默认、合并字符串解析容错。
+- 像素：网格透明间隙、合并大格居中、空位背景、JPG 白底、预览与保存一致。
+- `tests/qa/run_cli_tests.py` 新增网格 `--compose` 独立公式断言 + Pillow 像素校验；既有用例全部继续通过。
+- 验收标准见需求文档第 7 节 A1–A18。
+
+### 10.9 文件写入范围（本次）
+
+| 范围 | Owner |
+|---|---|
+| `src/Common/Models.cs`、`src/Core/GridLayout.cs`、`src/Program.cs`、`docs/interfaces.md`、`README.md`、`scripts/使用说明.txt`、`src/AssemblyInfo.cs`、构建/安装 | Lead |
+| `src/Core/LayoutEngine.cs`、`src/Core/Compositor.cs`、`src/Core/SettingsStore.cs`、`tests/core/` | core-dev |
+| `src/App/`（含新增 `GridMergeDialog.cs`） | ui-dev |
+| `tests/qa/`、`docs/qa/`（v1.1 验收） | qa |
+
+> 编译检查约定：Lead/QA 才运行 `scripts\build.ps1`（写 `build\`/`dist\`）；core-dev 用
+> `csc ... /out:build\_check_core.exe`，ui-dev 用 `/out:build\_check_ui.exe`，避免并发写同一输出；测试用
+> `tests\core\run-core-tests.ps1` 仅 core-dev 运行。
+

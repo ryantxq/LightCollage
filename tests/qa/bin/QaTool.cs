@@ -103,6 +103,9 @@ internal static class QaTool
                 case "settext": SetTextCmd(args); break;
                 case "waittext": WaitTextCmd(args); break;
                 case "segwait": SegWaitCmd(args); break;
+                case "segcount": SegCountCmd(args); break;
+                case "matrixdrag": MatrixDragCmd(args); break;
+                case "previewdrag": PreviewDragCmd(args); break;
                 case "uistart": UiStartCmd(args); break;
                 case "ctrlsave": CtrlSaveCmd(args); break;
                 case "clickthumb": ClickThumbCmd(args); break;
@@ -134,6 +137,10 @@ internal static class QaTool
         Out("  keys <sendkeys> | paste <text> | close <title> | setpos <title> <x> <y> <w> <h>");
         Out("  coldstart <exe> [args...] | waitwin <title> <ms> | waitgone <title> <ms> | waitfile <path> <ms>");
         Out("  uiafind <name> [exact] | clickuia <name> | menudump <out.txt>");
+        Out("  segwait <title> <name> <index> <expected> [timeout] [segmentCount]  (v1.1: 三段请传 3)");
+        Out("  matrixdrag <dialogTitle> <rows> <cols> <r1> <c1> <r2> <c2> [ms]  (合并弹窗矩阵拖选)");
+        Out("  previewdrag <title> <canvasW> <canvasH> <fromX> <fromY> <toX> <toY> [ms]  (预览拖动对调)");
+        Out("  texts <title> <out.txt> | ctrlsave <title> <dir> | step <title> <name> <+|-> [times]");
     }
 
     private static IntPtr WaitWindow(string title, int timeoutMs)
@@ -675,14 +682,17 @@ internal static class QaTool
 
     private static void SegWaitCmd(string[] args)
     {
-        // segwait <windowTitle> <uiaName> <index> <expectedText> [timeoutMs]
+        // segwait <windowTitle> <uiaName> <index> <expectedText> [timeoutMs] [segmentCount]
+        // v1.1：拼接方式变为三段，调用方传 segmentCount=3；缺省 2 保持 v1.0 脚本兼容。
         AutomationElement e = FindInWindow(args[1], args[2], false);
         if (e == null) { ExitCode = 1; return; }
         automation_rect r = GetRect(e);
         int index = int.Parse(args[3]);
         string expected = args[4];
         int timeout = args.Length > 5 ? int.Parse(args[5]) : 3000;
-        double px = r.X + r.W / 2.0 * (index + 0.5);
+        int segmentCount = args.Length > 6 ? int.Parse(args[6]) : 2;
+        if (segmentCount < 1) segmentCount = 1;
+        double px = r.X + r.W / (double)segmentCount * (index + 0.5);
         double py = r.Y + r.H / 2;
         MoveIt((int)Math.Round(px), (int)Math.Round(py));
         ClickDownUp(false);
@@ -700,8 +710,248 @@ internal static class QaTool
             Thread.Sleep(10);
         }
         sw.Stop();
-        Out((found ? "SEGWAIT_OK " : "SEGWAIT_TIMEOUT ") + expected + " after " + sw.ElapsedMilliseconds + "ms (click " + px.ToString("0") + "," + py.ToString("0") + ")");
+        Out((found ? "SEGWAIT_OK " : "SEGWAIT_TIMEOUT ") + expected + " after " + sw.ElapsedMilliseconds + "ms (click " + px.ToString("0") + "," + py.ToString("0") + " segs=" + segmentCount + ")");
         if (!found) ExitCode = 1;
+    }
+
+    /// <summary>segcount <windowTitle> <uiaName> <index> <count>：只点击不等待（用于三段控件定位）。</summary>
+    private static void SegCountCmd(string[] args)
+    {
+        AutomationElement e = FindInWindow(args[1], args[2], false);
+        if (e == null) { ExitCode = 1; return; }
+        automation_rect r = GetRect(e);
+        int index = int.Parse(args[3]);
+        int count = Math.Max(1, int.Parse(args[4]));
+        double px = r.X + r.W / (double)count * (index + 0.5);
+        double py = r.Y + r.H / 2;
+        MoveIt((int)Math.Round(px), (int)Math.Round(py));
+        ClickDownUp(false);
+        Out(string.Format("SEGCOUNT index={0} count={1} rect={2:0},{3:0},{4:0},{5:0} -> click {6:0},{7:0}",
+            index, count, r.X, r.Y, r.W, r.H, px, py));
+    }
+
+    /// <summary>在合并弹窗的「网格矩阵」上从 (r1,c1) 拖到 (r2,c2)，用于框选矩形区域。</summary>
+    private static void MatrixDragCmd(string[] args)
+    {
+        // matrixdrag <dialogTitle> <rows> <cols> <r1> <c1> <r2> <c2> [ms]
+        string title = args[1];
+        int rows = int.Parse(args[2]);
+        int cols = int.Parse(args[3]);
+        int r1 = int.Parse(args[4]);
+        int c1 = int.Parse(args[5]);
+        int r2 = int.Parse(args[6]);
+        int c2 = int.Parse(args[7]);
+        int ms = args.Length > 8 ? int.Parse(args[8]) : 500;
+        IntPtr h = WaitWindow(title, 5000);
+        if (h == IntPtr.Zero) { Out("NOWINDOW " + title); ExitCode = 1; return; }
+        BringWindow(h);
+        double dpiScale = GetDpiForWindow(h) / 96.0;
+        int matLeft = 0, matTop = 0, matW = 0, matH = 0;
+        bool fromUia = false;
+        try
+        {
+            AutomationElement root = AutomationElement.FromHandle(h);
+            List<AutomationElement> list = FindByName(root, "网格矩阵", true);
+            for (int i = 0; i < list.Count; i++)
+            {
+                try
+                {
+                    string ct = list[i].Current.ControlType.ProgrammaticName;
+                    if (ct == "ControlType.Text") continue;
+                    System.Windows.Rect mr = list[i].Current.BoundingRectangle;
+                    if (mr.Width < 20 || mr.Height < 20) continue;
+                    matLeft = (int)Math.Round(mr.Left);
+                    matTop = (int)Math.Round(mr.Top);
+                    matW = (int)Math.Round(mr.Width);
+                    matH = (int)Math.Round(mr.Height);
+                    fromUia = true;
+                    break;
+                }
+                catch { }
+            }
+        }
+        catch { }
+        if (!fromUia)
+        {
+            // 兜底：按 GridMergeDialog 布局常量（40,118,468,380 逻辑像素）推算
+            RECT wr, cr;
+            GetWindowRect(h, out wr);
+            GetClientRect(h, out cr);
+            int borderX = (wr.Right - wr.Left - cr.Right) / 2;
+            int borderY = (wr.Bottom - wr.Top - cr.Bottom);
+            matLeft = wr.Left + borderX + S(40, dpiScale);
+            matTop = wr.Top + borderY + S(118, dpiScale);
+            matW = S(468, dpiScale);
+            matH = S(380, dpiScale);
+        }
+
+        // 与 GridMergeDialog.GridMatrixControl.ComputeGeometry 相同的几何
+        int gap = S(6, dpiScale);
+        int pad = S(8, dpiScale);
+        int availW = Math.Max(1, matW - pad * 2);
+        int availH = Math.Max(1, matH - pad * 2);
+        int cellByWidth = (availW - gap * Math.Max(0, cols - 1)) / Math.Max(1, cols);
+        int cellByHeight = (availH - gap * Math.Max(0, rows - 1)) / Math.Max(1, rows);
+        int cell = Math.Min(cellByWidth, cellByHeight);
+        int maxCell = S(76, dpiScale);
+        if (cell > maxCell) cell = maxCell;
+        if (cell < 4) cell = 4;
+        int gridW = cols * cell + gap * Math.Max(0, cols - 1);
+        int gridH = rows * cell + gap * Math.Max(0, rows - 1);
+        int originX = (matW - gridW) / 2;
+        int originY = (matH - gridH) / 2;
+        int fromX = matLeft + originX + c1 * (cell + gap) + cell / 2;
+        int fromY = matTop + originY + r1 * (cell + gap) + cell / 2;
+        int toX = matLeft + originX + c2 * (cell + gap) + cell / 2;
+        int toY = matTop + originY + r2 * (cell + gap) + cell / 2;
+        Out(string.Format("MATRIXDRAG from=({0},{1}) to=({2},{3}) matrix={4},{5} {6}x{7} cell={8} uia={9}",
+            fromX, fromY, toX, toY, matLeft, matTop, matW, matH, cell, fromUia));
+        DragPath(fromX, fromY, toX, toY, ms);
+        Out("matrixdrag done");
+    }
+
+    /// <summary>预览区拖动：把输出坐标换算成屏幕坐标后拖拽（用于网格/横/纵预览对调）。</summary>
+    private static void PreviewDragCmd(string[] args)
+    {
+        // previewdrag <mainTitle> <canvasW> <canvasH> <fromOutX> <fromOutY> <toOutX> <toOutY> [ms]
+        string title = args[1];
+        int canvasW = int.Parse(args[2]);
+        int canvasH = int.Parse(args[3]);
+        int fromOutX = int.Parse(args[4]);
+        int fromOutY = int.Parse(args[5]);
+        int toOutX = int.Parse(args[6]);
+        int toOutY = int.Parse(args[7]);
+        int ms = args.Length > 8 ? int.Parse(args[8]) : 700;
+        IntPtr h = WaitWindow(title, 3000);
+        if (h == IntPtr.Zero) { Out("NOWINDOW " + title); ExitCode = 1; return; }
+        BringWindow(h);
+        Thread.Sleep(200);
+        double dpiScale = GetDpiForWindow(h) / 96.0;
+        int panelLeft = 0, panelTop = 0, panelW = 0, panelH = 0;
+        bool fromUia = false;
+        try
+        {
+            AutomationElement root = AutomationElement.FromHandle(h);
+            List<AutomationElement> list = FindByName(root, "预览区", true);
+            for (int i = 0; i < list.Count; i++)
+            {
+                try
+                {
+                    if (list[i].Current.ControlType.ProgrammaticName == "ControlType.Text") continue;
+                    System.Windows.Rect pr = list[i].Current.BoundingRectangle;
+                    if (pr.Width < 100 || pr.Height < 100) continue;
+                    panelLeft = (int)Math.Round(pr.Left);
+                    panelTop = (int)Math.Round(pr.Top);
+                    panelW = (int)Math.Round(pr.Width);
+                    panelH = (int)Math.Round(pr.Height);
+                    fromUia = true;
+                    break;
+                }
+                catch { }
+            }
+        }
+        catch { }
+        if (!fromUia)
+        {
+            // 兜底：MainForm.LayoutUi 的固定布局常量（逻辑像素 16/292/420/12/28/104/26/20/260）
+            RECT wr, cr;
+            GetWindowRect(h, out wr);
+            GetClientRect(h, out cr);
+            int borderX = (wr.Right - wr.Left - cr.Right) / 2;
+            int borderY = wr.Bottom - wr.Top - cr.Bottom;
+            int pad = S(16, dpiScale);
+            int sideW = S(292, dpiScale);
+            int panelX = cr.Right - pad - sideW;
+            int leftW = Math.Max(S(420, dpiScale), panelX - pad - S(12, dpiScale));
+            int toolbarH = S(28, dpiScale);
+            int stripH = S(104, dpiScale);
+            int statusH = S(26, dpiScale);
+            int previewH = cr.Bottom - pad * 2 - toolbarH - stripH - statusH - S(20, dpiScale);
+            if (previewH < S(260, dpiScale)) previewH = S(260, dpiScale);
+            panelLeft = wr.Left + borderX + pad;
+            panelTop = wr.Top + borderY + pad;
+            panelW = leftW;
+            panelH = previewH;
+        }
+
+        int contentPad = S(18, dpiScale);
+        int contentW = Math.Max(1, panelW - contentPad * 2);
+        int contentH = Math.Max(1, panelH - contentPad * 2);
+        double compositionScale = Math.Min((double)contentW / canvasW, (double)contentH / canvasH);
+        if (compositionScale > 1.0) compositionScale = 1.0;
+        if (compositionScale <= 0.0) compositionScale = 1.0;
+        int bitmapW = Math.Max(1, RoundAway(canvasW * compositionScale));
+        int bitmapH = Math.Max(1, RoundAway(canvasH * compositionScale));
+        double displayScale = Math.Min((double)contentW / bitmapW, (double)contentH / bitmapH);
+        if (displayScale > 1.0) displayScale = 1.0;
+        int displayW = Math.Max(1, RoundAway(bitmapW * displayScale));
+        int displayH = Math.Max(1, RoundAway(bitmapH * displayScale));
+        int displayLeft = contentPad + (contentW - displayW) / 2;
+        int displayTop = contentPad + (contentH - displayH) / 2;
+        double factorX = compositionScale * (double)displayW / (double)bitmapW;
+        double factorY = compositionScale * (double)displayH / (double)bitmapH;
+        int fromX = panelLeft + displayLeft + (int)Math.Round(fromOutX * factorX);
+        int fromY = panelTop + displayTop + (int)Math.Round(fromOutY * factorY);
+        int toX = panelLeft + displayLeft + (int)Math.Round(toOutX * factorX);
+        int toY = panelTop + displayTop + (int)Math.Round(toOutY * factorY);
+        Out(string.Format("PREVIEWDRAG panel={0},{1} {2}x{3} content={4}x{5} compScale={6:0.0000} factor={7:0.0000} from=({8},{9}) to=({10},{11}) uia={12}",
+            panelLeft, panelTop, panelW, panelH, contentW, contentH, compositionScale, factorX, fromX, fromY, toX, toY, fromUia));
+        bool escMode = args.Length > 9 && string.Equals(args[9], "esc", StringComparison.OrdinalIgnoreCase);
+        if (escMode)
+        {
+            // 拖到目标后按 Esc 取消（验证 Esc 取消拖动），再松开鼠标
+            MoveIt(fromX, fromY);
+            mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, UIntPtr.Zero);
+            Thread.Sleep(120);
+            int steps = 16;
+            for (int i = 1; i <= steps; i++)
+            {
+                int x = fromX + (toX - fromX) * i / steps;
+                int y = fromY + (toY - fromY) * i / steps;
+                SetCursorPos(x, y);
+                Thread.Sleep(25);
+            }
+            Thread.Sleep(200);
+            SendKeys.SendWait("{ESC}");
+            Thread.Sleep(250);
+            SetCursorPos(toX + 6, toY + 6);
+            Thread.Sleep(120);
+            mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, UIntPtr.Zero);
+            Thread.Sleep(300);
+            Out("previewdrag esc done");
+            return;
+        }
+        DragPath(fromX, fromY, toX, toY, ms);
+        Out("previewdrag done");
+    }
+
+    private static int S(int logical, double dpiScale)
+    {
+        return (int)Math.Round(logical * dpiScale);
+    }
+
+    private static int RoundAway(double value)
+    {
+        if (value < 0) return -RoundAway(-value);
+        return (int)Math.Round(value, MidpointRounding.AwayFromZero);
+    }
+
+    private static void DragPath(int fromX, int fromY, int toX, int toY, int ms)
+    {
+        MoveIt(fromX, fromY);
+        mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, UIntPtr.Zero);
+        Thread.Sleep(120);
+        int steps = Math.Max(12, ms / 25);
+        for (int i = 1; i <= steps; i++)
+        {
+            int x = fromX + (toX - fromX) * i / steps;
+            int y = fromY + (toY - fromY) * i / steps;
+            SetCursorPos(x, y);
+            Thread.Sleep(Math.Max(10, ms / steps));
+        }
+        Thread.Sleep(200);
+        mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, UIntPtr.Zero);
+        Thread.Sleep(350);
     }
 
     private static void UiStartCmd(string[] args)

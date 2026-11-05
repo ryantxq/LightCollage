@@ -115,6 +115,21 @@ namespace LightCollage.Core
                 settings.Collage.OutputTarget = Clamp(
                     ParseInt(GetValue(values, "collage", "outputtarget"), 2000), MinOutputTarget, MaxOutputTarget);
 
+                // v1.1 网格拼接：旧配置缺键时用默认值；非法值 clamp，合并结构先 clamp 行列再解析。
+                settings.Collage.GridRows = GridLayout.ClampRows(
+                    ParseInt(GetValue(values, "collage", "gridrows"), 3));
+                settings.Collage.GridColumns = GridLayout.ClampColumns(
+                    ParseInt(GetValue(values, "collage", "gridcolumns"), 3));
+                settings.Collage.RowGap = GridLayout.ClampGap(
+                    ParseInt(GetValue(values, "collage", "rowgap"), 12));
+                settings.Collage.ColumnGap = GridLayout.ClampGap(
+                    ParseInt(GetValue(values, "collage", "columngap"), 12));
+                settings.Collage.Merges = GridLayout.ParseMerges(
+                    GetValue(values, "collage", "gridmerges"),
+                    settings.Collage.GridRows, settings.Collage.GridColumns);
+                settings.Collage.ShowGridGuides = ParseBool(
+                    GetValue(values, "collage", "showgridguides"), true);
+
                 settings.WindowWidth = Clamp(
                     ParseInt(GetValue(values, "window", "width"), 1180), MinWindowWidth, MaxWindowWidth);
                 settings.WindowHeight = Clamp(
@@ -162,6 +177,16 @@ namespace LightCollage.Core
                 builder.AppendLine("JpegQuality=" + collage.JpegQuality.ToString(CultureInfo.InvariantCulture));
                 builder.AppendLine("OutputSizeMode=" + collage.OutputSizeMode.ToString());
                 builder.AppendLine("OutputTarget=" + collage.OutputTarget.ToString(CultureInfo.InvariantCulture));
+                // v1.1 网格拼接：行列/间距写入前 clamp；合并结构规范化后用 1 基闭区间格式序列化。
+                int gridRows = GridLayout.ClampRows(collage.GridRows);
+                int gridColumns = GridLayout.ClampColumns(collage.GridColumns);
+                builder.AppendLine("GridRows=" + gridRows.ToString(CultureInfo.InvariantCulture));
+                builder.AppendLine("GridColumns=" + gridColumns.ToString(CultureInfo.InvariantCulture));
+                builder.AppendLine("RowGap=" + GridLayout.ClampGap(collage.RowGap).ToString(CultureInfo.InvariantCulture));
+                builder.AppendLine("ColumnGap=" + GridLayout.ClampGap(collage.ColumnGap).ToString(CultureInfo.InvariantCulture));
+                builder.AppendLine("GridMerges=" + GridLayout.SerializeMerges(
+                    GridLayout.NormalizeMerges(gridRows, gridColumns, collage.Merges)));
+                builder.AppendLine("ShowGridGuides=" + (collage.ShowGridGuides ? "1" : "0"));
                 builder.AppendLine("[window]");
                 builder.AppendLine("Width=" + settings.WindowWidth.ToString(CultureInfo.InvariantCulture));
                 builder.AppendLine("Height=" + settings.WindowHeight.ToString(CultureInfo.InvariantCulture));
@@ -333,6 +358,12 @@ namespace LightCollage.Core
                 return fallback;
             }
             string value = raw.Trim();
+            if (string.Equals(value, "Grid", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(value, "G", StringComparison.OrdinalIgnoreCase)
+                || value == "2")
+            {
+                return CollageOrientation.Grid;
+            }
             if (string.Equals(value, "Vertical", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(value, "V", StringComparison.OrdinalIgnoreCase)
                 || value == "1")
