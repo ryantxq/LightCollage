@@ -45,6 +45,7 @@ namespace LightCollage.App
         private Label _columnCountLabel;
         private Label _rowGapLabel;
         private Label _columnGapLabel;
+        private Label _gridMarginLabel;
         private Stepper _rowsStep;
         private Stepper _columnsStep;
         private Stepper _rowGapStep;
@@ -243,6 +244,10 @@ namespace LightCollage.App
             _sidePanel.Controls.Add(_columnCountLabel);
             _sidePanel.Controls.Add(_rowGapLabel);
             _sidePanel.Controls.Add(_columnGapLabel);
+            // 外边距并入网格参数组：网格模式下使用与行/列参数一致的小标题样式（横/纵模式仍用原标签）
+            _gridMarginLabel = NewGridParamLabel("外边距");
+            _gridMarginLabel.AccessibleName = "外边距标签";
+            _sidePanel.Controls.Add(_gridMarginLabel);
             _rowsStep = NewStepper(GridLayout.MinRowsOrColumns, GridLayout.MaxRowsOrColumns, 1);
             _columnsStep = NewStepper(GridLayout.MinRowsOrColumns, GridLayout.MaxRowsOrColumns, 1);
             _rowGapStep = NewStepper(0, GridLayout.MaxGapOrMargin, 1);
@@ -475,6 +480,7 @@ namespace LightCollage.App
             _columnCountLabel.Visible = visible;
             _rowGapLabel.Visible = visible;
             _columnGapLabel.Visible = visible;
+            _gridMarginLabel.Visible = visible;
             _rowsStep.Visible = visible;
             _columnsStep.Visible = visible;
             _rowGapStep.Visible = visible;
@@ -700,10 +706,12 @@ namespace LightCollage.App
             _columnGapStep.Size = new Size(half, stepH);
             y += stepH + rowGap;
 
-            _marginLabel.Location = new Point(pad, y + Theme.S(this, 3));
-            _marginLabel.Size = new Size(Theme.S(this, 110), Theme.S(this, 24));
-            _marginStep.Location = new Point(pad + innerW - Theme.S(this, 124), y);
-            _marginStep.Size = new Size(Theme.S(this, 124), stepH);
+            // 外边距与行/列参数同组同款式：小标题在上、同宽步进器在下（网格模式下外边距属于网格参数组）
+            _gridMarginLabel.Location = new Point(pad, y);
+            _gridMarginLabel.Size = new Size(half, labelH);
+            y += labelH;
+            _marginStep.Location = new Point(pad, y);
+            _marginStep.Size = new Size(half, stepH);
             y += stepH + rowGap;
 
             _mergeCellsButton.Location = new Point(pad, y);
@@ -891,12 +899,13 @@ namespace LightCollage.App
             }
             if (_gridSection != null)
             {
-                // 网格模式：显示「网格」区（外边距并入本区），隐藏「图片间距」；横/纵模式恢复原样。
+                // 网格模式：显示「网格」区（行列/行距/列距/外边距统一为同一组样式），隐藏「图片间距」；横/纵模式恢复原样。
                 _spacingSection.Visible = !grid;
                 _gapLabel.Visible = !grid;
                 _gapStep.Visible = !grid;
                 SetGridControlsVisible(grid);
-                _marginLabel.Visible = true;
+                _marginLabel.Visible = !grid;
+                _gridMarginLabel.Visible = grid;
                 _marginStep.Visible = true;
                 if (_hintLabel != null)
                 {
